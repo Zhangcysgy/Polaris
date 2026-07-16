@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.so
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Polaris data (SQLite + large files)
+data/polaris.db
+data/crt/nodes/*.yaml
+
+# User projects
+projects/*
+!projects/_template/
+
+# Reports
+reports/*.md
+!reports/.gitkeep
+
+# Experiment results
+experiments/results/
+benchmarks/results/
+
+# Environment
+.env
+.env.local
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Obsidian
+.obsidian/

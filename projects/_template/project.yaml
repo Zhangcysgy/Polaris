@@ -1,0 +1,13 @@
+# 项目元数据模板
+# 复制此文件到新项目目录并修改
+
+name: ""                        # 项目名称（英文 slug）
+title: ""                       # 中文全名
+description: ""                 # 简要描述
+domain: atmospheric_science     # 学科领域
+status: active                  # active | completed | archived
+created_at: ""                  # YYYY-MM-DD
+keywords: []                    # 标签列表
+
+# 关联的方法库条目（初始为空）
+methods: []

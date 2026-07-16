@@ -1,0 +1,105 @@
+# Polaris 全局配置文件
+
+# ============================================================
+# LLM 配置
+# ============================================================
+llm:
+  primary:
+    provider: deepseek
+    model: deepseek-chat
+    api_key_env: DEEPSEEK_API_KEY        # 从环境变量读取
+    base_url: https://api.deepseek.com/v1
+    max_tokens: 8192
+    temperature: 0.3                      # 分析任务用低温
+
+  secondary:
+    provider: zhipu
+    model: glm-4-plus
+    api_key_env: ZHIPU_API_KEY
+    base_url: https://open.bigmodel.cn/api/paas/v4
+
+  review:                                 # 审稿专用（更低温）
+    temperature: 0.1
+    max_tokens: 16384
+
+# ============================================================
+# 项目路径
+# ============================================================
+paths:
+  projects_root: H:\Polaris\projects      # 研究项目存放目录
+  data_dir: H:\Polaris\data               # 全局数据目录
+  methods_dir: H:\Polaris\methods         # 方法库目录
+  reports_dir: H:\Polaris\reports         # 简报输出目录
+  db_path: H:\Polaris\data\polaris.db     # SQLite 数据库路径
+
+# ============================================================
+# 引擎配置
+# ============================================================
+
+# 引擎一：产物追踪
+engine_one:
+  auto_capture: true                       # 自动捕获版本
+  clean_room_default: true                 # 审稿默认干净房间
+  max_versions_per_project: 100            # 超过后自动压缩归档
+  merge_same_day: true                     # 同一天同类运行合并
+
+# 引擎二：深度验证
+engine_two:
+  expert_count: 3                          # 多角色辩论的专家数
+  red_team_required_questions: 3           # 红队模式最少质疑数
+  sensitivity_default_range: 0.3           # 敏感度分析默认 ±30%
+  max_review_retries: 5                    # 同一节点最大打回次数（硬退出）
+
+# 引擎三：全局方法迁移
+engine_three:
+  migration_levels: [0, 1, 2]             # 三级迁移策略
+  anomaly_sigma_threshold: 2.0             # 异常标记阈值（σ）
+  max_parallel_regions: 5                  # 并行迁移最大区域数
+
+# 引擎四：自主发现循环
+engine_four:
+  mvp_max_steps: 50                        # MVP 目标：50步闭环
+  soft_exit_no_improvement: 3              # 连续N次无改进 → 软退出
+  hard_exit_max_retries: 5                 # 同一节点打回上限 → 硬退出
+  direction_drift_check_interval: 10       # 每N步检查一次方向漂移
+  human_report_interval_steps: 20          # 每N步生成一次人类简报
+
+# ============================================================
+# 资源限制
+# ============================================================
+limits:
+  max_api_calls_per_hour: 500              # 每小时 API 调用上限
+  max_disk_gb: 50                          # 数据目录最大磁盘占用（GB）
+  max_loop_duration_hours: 48              # 单次循环最长运行时间
+  download_max_gb_per_request: 5           # 单次数据下载上限（GB）
+
+# ============================================================
+# 物理围栏（大气科学专属）
+# ============================================================
+physics_fence:
+  rules:
+    - name: specific_humidity_nonnegative
+      description: 比湿不得为负
+      severity: WARNING                    # WARNING | REVIEW | REJECT
+      action: clip_to_zero
+
+    - name: olr_range
+      description: OLR 应在 0-500 W/m² 范围
+      severity: WARNING
+      action: flag_outliers
+
+    - name: mass_conservation
+      description: 大气质量垂直积分应守恒
+      severity: REVIEW
+      tolerance: 0.15                      # 容忍 15% 残差
+      action: halt_and_report
+
+    - name: latitude_weight
+      description: 全球平均必须加 cos(纬度) 权重
+      severity: REJECT
+      action: reject_with_message
+
+    - name: temperature_range
+      description: 地表气温应在 180-330 K 范围
+      severity: WARNING
+      action: flag_outliers

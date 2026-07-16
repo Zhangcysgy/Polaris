@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polaris"
+version = "0.1.0"
+description = "Polaris — AI 科研自主发现系统（大气科学首发）"
+authors = [{name = "Zhang Chaoyang"}]
+license = {text = "MIT"}
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=1.0",
+    "httpx>=0.27",
+    "xarray>=2024.0",
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "matplotlib>=3.8",
+    "pyyaml>=6.0",
+    "structlog>=24.0",
+    "click>=8.1",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+polaris = "polaris.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
