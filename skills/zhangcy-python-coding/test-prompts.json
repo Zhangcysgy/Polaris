@@ -1,0 +1,5 @@
+[
+  {"id": 1, "prompt": "帮我写一个Python函数，从NetCDF文件读取ERA5数据，计算沙尘浓度的季节平均值", "expected": "生成按规范（docstring+类型注解+vectorized+logging）的代码，执行code review，报告结果"},
+  {"id": 2, "prompt": "review一下我的代码，在/home/projects/dust_analysis.py", "expected": "读取文件，启动subagent审查，标记P0/P1问题"},
+  {"id": 3, "prompt": "帮我重构这个脚本，它太长了: /home/projects/legacy_code.py", "expected": "拆分函数，加docstring/类型注解，执行审查，修复P0"}
+]

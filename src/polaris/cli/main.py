@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
+import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -544,38 +546,121 @@ def discover():
 
 @discover.command("start")
 @click.argument("direction")
-@click.option("--max-steps", "-n", default=50, help="最大步数（MVP: 50）")
+@click.option("--max-steps", "-n", default=10, help="最大步数（默认10）")
 @click.option("--dry-run", is_flag=True, help="仅生成循环计划（不执行）")
-def discover_start(direction: str, max_steps: int, dry_run: bool):
-    """启动自主科学发现循环"""
+@click.option("--data-dir", "-d", default=None, help="数据目录路径（如 H:\\data\\raw\\era5）")
+@click.option("--use-llm/--no-llm", default=True, help="是否使用LLM决策（默认开启）")
+def discover_start(direction: str, max_steps: int, dry_run: bool, data_dir: str | None, use_llm: bool):
+    """启动自主科学发现循环
+
+    \b
+    示例:
+      polaris discover start "中亚沙尘源区湿度与风场特征"
+      polaris discover start "分析撒哈拉沙尘起电机制" -d H:\\data\\raw\\era5 -n 15
+    """
     from polaris.engine_four_loop import DiscoveryLoop
+    from polaris.core.llm_client import LLMClient
+
+    # 数据目录
+    if data_dir is None:
+        from polaris.core.config import get_config
+        cfg = get_config()
+        data_dir = cfg.get("paths", "data_dir", default="")
+        if not data_dir:
+            candidates = [r"H:\data\raw\era5", r"D:\data\era5", "./data"]
+            for c in candidates:
+                if os.path.exists(c):
+                    data_dir = c
+                    break
 
     with _get_db() as db:
-        loop = DiscoveryLoop(db, max_steps=max_steps)
-        result = loop.start(direction)
+        loop = DiscoveryLoop(db, max_steps=max_steps, data_dir=data_dir or "")
 
-        click.echo(f"\n{'='*50}")
-        click.echo(f"  Polaris 自主发现循环")
-        click.echo(f"  循环ID: {result.loop_id}")
-        click.echo(f"  状态: {result.status.value}")
-        click.echo(f"{'='*50}")
+        click.echo(f"\n{'='*60}")
+        click.echo(f"  🔭 Polaris 自主科学发现循环")
+        click.echo(f"  方向: {direction}")
+        click.echo(f"{'='*60}")
 
-        if dry_run:
-            click.echo(f"\n{result.summary}")
-            click.echo(f"\n✅ 循环计划已生成（dry-run）。")
+        # ──── 第一步：数据感知（必须先做）────
+        click.echo(f"\n  📦 扫描数据目录: {data_dir or '未指定'}")
+        inventory = loop.scan_data_inventory()
+
+        if inventory.get("error"):
+            click.echo(f"  ❌ {inventory['error']}")
             return
 
-        # 执行几步作为演示
-        click.echo(f"\n执行前 5 步（框架模式）...")
-        for _ in range(5):
-            node = loop.step()
-            if node:
-                click.echo(f"  [{node.node_type.value}] {node.summary}")
-            else:
+        click.echo(f"  样本文件: {inventory['sample_file']}")
+        click.echo(f"  变量 ({len(inventory['variables'])}): {', '.join(inventory['variables'])}")
+        click.echo(f"  维度: {inventory['dims']}")
+        click.echo(f"  时间: {inventory['time_range']}")
+        click.echo(f"  空间: {inventory['spatial_range']}")
+        click.echo(f"  分辨率: {inventory['resolution']}")
+
+        # ──── 第二步：建议分析方向 ────
+        llm = None
+        if use_llm:
+            try:
+                llm = LLMClient.from_config()
+            except Exception:
+                pass
+
+        suggestions = loop.suggest_directions(inventory, llm_client=llm)
+        click.echo(f"\n  💡 基于实际数据变量，可执行的分析方向:")
+        for i, s in enumerate(suggestions, 1):
+            click.echo(f"     {i}. {s}")
+        click.echo(f"\n  ⚠️  以上建议仅基于数据中实际存在的变量。")
+        click.echo(f"  没有沙尘浓度/AOD/沙尘排放等变量 → 无法直接分析沙尘。")
+        click.echo(f"  可以分析的是起沙的气象条件（风、干旱度、边界层等）。")
+
+        if dry_run:
+            click.echo(f"\n✅ 数据感知完成（dry-run）。使用 --no-dry-run 开始执行分析。")
+            return
+
+        # 启动循环
+        loop.start(direction)
+
+        # 初始化 LLM 客户端（如果可用）
+        llm = None
+        if use_llm:
+            try:
+                llm = LLMClient.from_config()
+                click.echo(f"\n🤖 LLM 决策引擎: {llm.config.model}")
+            except Exception as e:
+                click.echo(f"\n⚠️ LLM 不可用 ({e})，使用规则决策模式。")
+
+        # 执行循环
+        click.echo(f"\n开始探索...\n")
+        for i in range(max_steps):
+            node = loop.step(llm_client=llm)
+            if node is None:
                 break
 
-        result = loop.stop()
-        click.echo(f"\n循环结束: {result.status.value} | 共 {result.total_steps} 步")
+            icon = {"analysis": "🔬", "literature": "📚", "validation": "🔍",
+                    "migration": "🌍", "discovery": "💡", "milestone": "🏁"}.get(node.node_type.value, "⚪")
+            click.echo(f"  Step {i+1}: {icon} [{node.node_type.value}] {node.summary[:100]}")
+            if node.detail:
+                for line in node.detail.split("\n")[:6]:
+                    click.echo(f"         {line[:120]}")
+
+            if loop.status.value in ("soft_exit", "hard_exit", "human_exit"):
+                break
+
+        # 生成报告
+        click.echo(f"\n{'='*60}")
+        click.echo(f"  生成发现简报...")
+        report = loop.generate_report(llm_client=llm)
+        click.echo(f"{'='*60}\n")
+        click.echo(report[:2000])
+
+        # 保存报告
+        report_path = f"H:\\Polaris\\reports\\discovery_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        try:
+            os.makedirs(os.path.dirname(report_path), exist_ok=True)
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(report)
+            click.echo(f"\n📄 简报已保存: {report_path}")
+        except Exception:
+            pass
 
 
 @discover.command("status")

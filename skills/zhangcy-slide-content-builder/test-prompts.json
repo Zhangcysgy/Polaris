@@ -1,0 +1,5 @@
+[
+  {"id": 1, "prompt": "我要做一篇关于transformer在蛋白质结构预测中应用的文献汇报，这篇论文叫 AlphaFold3，发表在今年Nature上。我需要15分钟的汇报内容。", "expected": "进入paper2slides模式，生成含标题/要点/插图建议/完整讲稿的slide_content.md"},
+  {"id": 2, "prompt": "帮我准备一个组会汇报，讲一下我最近的实验结果。我做了3组对比实验，发现新药A与B的协同效应显著。", "expected": "进入data2slides模式，对话式引导用户补充实验细节，生成slide_content.md"},
+  {"id": 3, "prompt": "做个PPT，随便讲什么", "expected": "先询问时长，然后引导用户选择模式，不直接生成空内容"}
+]

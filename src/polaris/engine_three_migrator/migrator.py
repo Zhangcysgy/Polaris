@@ -39,12 +39,12 @@ class MigrationStatus(str, Enum):
 @dataclass
 class MigrationResult:
     """一次区域迁移的结果。"""
-    run_id: str
     method_id: str
     source_region: str
     target_region: str
     level: MigrationLevel
     status: MigrationStatus
+    run_id: str = ""
     anomaly_detail: str = ""
     """异常描述——为什么目标区域的结果与源区域不同。"""
     migration_note: str = ""

@@ -1,0 +1,5 @@
+[
+  {"id": 1, "prompt": "帮我把这篇微信文章保存到 Obsidian: https://mp.weixin.qq.com/s/test123", "expected": "提取URL，确认是否执行，运行clipper.py，报告保存结果"},
+  {"id": 2, "prompt": "保存这几篇公众号文章: https://mp.weixin.qq.com/s/a https://mp.weixin.qq.com/s/b https://mp.weixin.qq.com/s/c", "expected": "批量处理，确认后逐个执行，汇总报告"},
+  {"id": 3, "prompt": "这个链接我打不开，帮我看看能不能保存: https://mp.weixin.qq.com/s/expired123", "expected": "先尝试抓取，失败后报告原因并建议用户先手动打开建立会话"}
+]

@@ -1,0 +1,26 @@
+{
+  "skill_name": "zhangcy-wechat-clipper",
+  "evals": [
+    {
+      "id": 1,
+      "name": "标准公众号文章保存",
+      "prompt": "帮我把这篇公众号文章保存到 Obsidian：https://mp.weixin.qq.com/s/nU6b66a--PNFz6-TfAozKg",
+      "expected_output": "文章以 Markdown 格式保存到 Obsidian 目录，包含 YAML frontmatter（标题、来源、日期），所有图片下载到 attachments/，Markdown 中图片引用已替换为本地路径",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "带图片的多图文文章",
+      "prompt": "收藏这篇微信公众号文章到 Obsidian 中：https://mp.weixin.qq.com/s/test-article-with-many-images",
+      "expected_output": "文章正文完整，图片全部下载到本地，超过 5 张图片时也能正确处理",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "URL 无效时的错误处理",
+      "prompt": "帮我把这个链接存到 Obsidian：https://mp.weixin.qq.com/s/invalid-article-404",
+      "expected_output": "优雅地报告链接无法访问，不崩溃，给出合理建议",
+      "files": []
+    }
+  ]
+}

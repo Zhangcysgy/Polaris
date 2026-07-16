@@ -1,0 +1,5 @@
+[
+  {"id": 1, "prompt": "帮我做一个学术汇报的PPT，内容是关于深度学习在医疗影像中的应用，我近期做完了实验需要汇报。", "expected": "询问模板偏好（默认ustc），确认内容结构，生成LaTeX，编译PDF"},
+  {"id": 2, "prompt": "我需要一个UISTC模板的演示文稿，slide_content.md已经准备好了，在我的项目目录里。", "expected": "使用ustc模板，找到slide_content.md，生成LaTeX，编译，交付最终PDF"},
+  {"id": 3, "prompt": "用清华大学模板，帮我做一个开题报告。内容在/home/projects/thesis-defense/slide_content.md", "expected": "识别thu模板尚未就绪或提示预留状态，不强行编译"}
+]

@@ -1,0 +1,5 @@
+[
+  {"id": 1, "prompt": "帮我做一篇关于沙尘暴中雷电现象的文献综述", "expected": "多角度搜索→整理→深度分析→综述报告"},
+  {"id": 2, "prompt": "调研一下近年来机器学习在降水临近预报中的应用进展", "expected": "系统文献调研，含方法对比和研究空白"},
+  {"id": 3, "prompt": "Write a literature review on the interaction between dust aerosols and tropical cyclones", "expected": "英文综述报告，含主题综合和未来方向"}
+]

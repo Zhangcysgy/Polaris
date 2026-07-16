@@ -1,0 +1,5 @@
+[
+  {"id": 1, "prompt": "帮我审稿，这是我准备好的论文 /home/projects/manuscript.md", "expected": "读取文件，询问是否开始审稿，生成完整7步审稿报告并保存"},
+  {"id": 2, "prompt": "帮我看看这篇论文还有什么问题，稿件内容在这里：[粘贴一段论文摘要]", "expected": "识别输入为粘贴文本，确认文件格式，运行短板扫描"},
+  {"id": 3, "prompt": "论文被拒了，帮我看看能不能重投，稿件在reviewer_comments.txt和response.md", "expected": "先读取原稿件和审稿意见，然后运行综合评估"}
+]

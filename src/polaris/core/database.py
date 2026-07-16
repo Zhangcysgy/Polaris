@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS crt_nodes (
     id              TEXT PRIMARY KEY,          -- 如 "node_042"
     parent_id       TEXT,                      -- 父节点
     project_id      TEXT NOT NULL,
-    node_type       TEXT NOT NULL CHECK(node_type IN ('analysis','validation','migration','discovery','dead','milestone')),
+    node_type       TEXT NOT NULL CHECK(node_type IN ('analysis','validation','migration','discovery','dead','milestone','literature')),
     status          TEXT NOT NULL DEFAULT 'active'
                         CHECK(status IN ('active','completed','frozen','merged')),
     summary         TEXT NOT NULL,             -- ≤500字摘要

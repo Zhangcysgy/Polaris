@@ -1,0 +1,5 @@
+[
+  {"id": 1, "prompt": "Review this paper: 帮我审一下这篇论文，题目是《Deep Learning for Protein Structure Prediction: A Comprehensive Survey》，作者放在 /home/manuscript.md", "expected": "自动识别field为computational biology/bioinformatics，配置5-reviwer团队，输出完整审稿报告+编辑决策+修改路线图"},
+  {"id": 2, "prompt": "Quick look at this methodology: 帮我快速看一下这篇文章的方法部分有没有问题，文本已粘贴：We used a convolutional neural network with 3 layers...", "expected": "触发methodology-focus模式，仅启动field_analyst + eic + methodology_reviewer，输出深度方法审稿报告"},
+  {"id": 3, "prompt": "Calibrate reviewer: 我想知道这个审稿系统在我的领域（computational biology）评分的准确性，这里有5篇我评估过的gold standard论文", "expected": "触发calibration模式，5x per paper运行，输出FNR/FPR/balanced accuracy报告"}
+]

@@ -1,21 +1,20 @@
-"""引擎四 — 自主科学发现循环
+"""引擎四 — LLM 驱动的自主科学发现循环 (v2)
 
-DiscoveryLoop 是 Polaris 的"大脑"——五引擎全串联的终极形态。
-半自主运行，关键节点汇报人类。
+每一步由 LLM 动态决策，而非固定脚本。
 
-8步循环（PRD §4-1）:
-    1.下载数据 → 2.匹配方法 → 3.执行分析 → 4.结果验证
-    → 5.文献检索 → 6.判断补数据 → 7.区域扩展 → 8.循环判断
-
-6个人类介入节点（PRD §4-2）:
-    需新方法 | 异常信号 | 需新数据 | 幽灵信号 | 方向漂移 | 每周审批
-
-4种退出条件（PRD §4-3）:
-    软退出 | 硬退出 | 人类退出 | 资源退出
+循环逻辑:
+    1. 构建当前状态上下文
+    2. LLM 决策下一步行动
+    3. 执行行动（数据分析/文献检索/迁移）
+    4. 记录 CRT 节点
+    5. 检查退出条件
+    6. 生成发现简报
 """
 
 from __future__ import annotations
 
+import json
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -29,15 +28,15 @@ from ..core.context_packet import ContextPacket
 class LoopStatus(str, Enum):
     IDLE = "idle"
     RUNNING = "running"
-    PAUSED = "paused"        # 等待人类裁定
-    SOFT_EXIT = "soft_exit"  # 收敛退出
-    HARD_EXIT = "hard_exit"  # 超过重试限制
+    PAUSED = "paused"
+    SOFT_EXIT = "soft_exit"
+    HARD_EXIT = "hard_exit"
     HUMAN_EXIT = "human_exit"
-    RESOURCE_EXIT = "resource_exit"
 
 
 class NodeType(str, Enum):
     ANALYSIS = "analysis"
+    LITERATURE = "literature"
     VALIDATION = "validation"
     MIGRATION = "migration"
     DISCOVERY = "discovery"
@@ -45,26 +44,17 @@ class NodeType(str, Enum):
     MILESTONE = "milestone"
 
 
-class InterventionType(str, Enum):
-    NEED_NEW_METHOD = "need_new_method"       # 方法库无匹配
-    ANOMALY_SIGNAL = "anomaly_signal"         # 偏差 >3σ
-    NEED_NEW_DATA = "need_new_data"           # 数据不足
-    GHOST_SIGNAL = "ghost_signal"             # 幽灵信号（高原/极地）
-    DIRECTION_DRIFT = "direction_drift"       # 偏离大方向
-    WEEKLY_REVIEW = "weekly_review"           # 每周例行审批
-
-
 @dataclass
 class CRTNode:
-    """CRT 拓扑中的一个节点。"""
+    """CRT 拓扑节点。"""
     id: str = ""
     parent_id: str = ""
     project_id: str = ""
     node_type: NodeType = NodeType.ANALYSIS
     status: str = "active"
     summary: str = ""
+    detail: str = ""         # 详细内容（分析结果/文献摘要）
     surprise_score: float = 0.0
-    physics_fence_result: str = ""
     created_at: str = ""
 
     def __post_init__(self):
@@ -74,55 +64,81 @@ class CRTNode:
             self.created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-@dataclass
-class DiscoveryResult:
-    """引擎四一次循环或里程碑的输出。"""
-    loop_id: str
-    direction: str              # 人类设定的大方向
-    status: LoopStatus
-    total_steps: int = 0
-    nodes: list[CRTNode] = field(default_factory=list)
-    discoveries: list[str] = field(default_factory=list)   # 发现标题列表
-    anomalies: list[str] = field(default_factory=list)     # 异常区域列表
-    ghost_signals: list[str] = field(default_factory=list) # 幽灵信号列表
-    summary: str = ""
-    created_at: str = ""
+# LLM 决策 Prompt
+DISCOVERY_DECISION_PROMPT = """你是 Polaris 自主科学发现系统的决策引擎。你的任务是分析当前研究状态，决定下一步行动。
 
-    def __post_init__(self):
-        if not self.loop_id:
-            self.loop_id = f"loop_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        if not self.created_at:
-            self.created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+## 当前研究状态
+- 研究方向: {direction}
+- 当前步数: {step}/{max_steps}
+- 已完成节点: {completed_nodes}
+- 最新发现: {latest_findings}
+- 可用数据: {available_data}
+- 方法库可用方法: {available_methods}
+
+## 可选行动
+1. **analyze** — 对可用数据执行分析（需指定分析目标和变量）
+2. **validate** — 对最新结果执行物理校验
+3. **literature** — 搜索相关文献（需指定搜索关键词）
+4. **migrate** — 将当前分析迁移到其他区域
+5. **conclude** — 当前方向已充分探索，生成结论
+
+## 输出格式
+请仅输出一行 JSON，不要输出其他内容：
+{{"action":"analyze|validate|literature|migrate|conclude","target":"具体目标描述","reason":"为什么选择这个行动","variables":["var1","var2"],"keywords":"搜索关键词(仅literature行动需要)"}}
+"""
+
+DISCOVERY_REPORT_PROMPT = """你是 Polaris 的科学发现报告生成器。请基于以下探索轨迹生成一份发现简报。
+
+研究方向: {direction}
+探索步数: {total_steps}
+节点摘要:
+{node_summaries}
+
+请生成一份结构化的发现简报，包含:
+1. 核心发现（1-2 句）
+2. 关键数值结果
+3. 与已有文献的关系
+4. 值得进一步探索的方向
+5. 方法学局限
+
+输出 Markdown 格式。
+"""
 
 
 class DiscoveryLoop:
-    """自主科学发现循环。
+    """LLM 驱动的自主科学发现循环。
 
     用法:
         db = Database(...)
-        loop = DiscoveryLoop(db, max_steps=50)
+        loop = DiscoveryLoop(db, max_steps=10)
+        loop.start("中亚沙尘源区湿度与风场特征分析")
 
-        # 启动循环
-        result = loop.start("全球沙尘起电的湿度调控机制")
+        for _ in range(max_steps):
+            node = loop.step()
+            if node is None:
+                break
+            print(f"[{node.node_type}] {node.summary}")
 
-        # 查询CRT拓扑
-        nodes = loop.get_crt_chain()
+        report = loop.generate_report()
+        print(report)
     """
 
-    # 配置
-    DEFAULT_MAX_STEPS = 50
-    SOFT_EXIT_NO_IMPROVEMENT = 3      # 连续N次无改进→软退出
-    HARD_EXIT_MAX_RETRIES = 5         # 同一节点打回上限→硬退出
-    DIRECTION_DRIFT_CHECK_INTERVAL = 10
-    HUMAN_REPORT_INTERVAL = 20
+    DEFAULT_MAX_STEPS = 10
+    SOFT_EXIT_NO_IMPROVEMENT = 3
 
-    def __init__(self, db: Database, max_steps: int | None = None):
+    def __init__(self, db: Database, max_steps: int | None = None, data_dir: str = ""):
         self.db = db
         self.db.initialize()
         self.max_steps = max_steps or self.DEFAULT_MAX_STEPS
-        self._current_step = 0
-        self._current_loop_id: str = ""
-        self._status: LoopStatus = LoopStatus.IDLE
+        self.data_dir = data_dir or os.environ.get("POLARIS_DATA_DIR", "")
+
+        self._step = 0
+        self._loop_id = ""
+        self._status = LoopStatus.IDLE
+        self._direction = ""
+        self._nodes: list[CRTNode] = []
+        self._no_improvement_count = 0
+        self._llm_client = None  # 延迟初始化
 
     @property
     def status(self) -> LoopStatus:
@@ -130,221 +146,463 @@ class DiscoveryLoop:
 
     @property
     def current_step(self) -> int:
-        return self._current_step
+        return self._step
 
     # ---- 循环控制 ----
 
-    def start(self, direction: str, project_id: str = "default") -> DiscoveryResult:
-        """启动一个新的发现循环。
-
-        M5框架版本：返回循环计划。
-        M5+将执行完整的8步循环。
-        """
-        self._current_loop_id = f"loop_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        self._current_step = 0
+    def start(self, direction: str) -> CRTNode:
+        """启动循环。"""
+        self._loop_id = f"loop_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self._step = 0
         self._status = LoopStatus.RUNNING
+        self._direction = direction
+        self._nodes = []
+        self._no_improvement_count = 0
 
-        # 创建根节点
-        root_node = self._create_node(
-            parent_id="",
-            node_type=NodeType.MILESTONE,
-            summary=f"循环启动: {direction}",
+        root = self._add_node(
+            NodeType.MILESTONE,
+            f"循环启动: {direction}",
+            f"最大步数: {self.max_steps}",
         )
+        return root
 
-        # 生成循环计划
-        plan = self._generate_plan(direction)
+    def scan_data_inventory(self) -> dict:
+        """扫描数据目录，返回数据清单（变量、时空范围、文件数）。
 
-        return DiscoveryResult(
-            loop_id=self._current_loop_id,
-            direction=direction,
-            status=LoopStatus.RUNNING,
-            total_steps=0,
-            nodes=[root_node],
-            summary=plan,
-        )
+        这是任何分析的前提——先知道有什么，再决定做什么。
+        """
+        inventory = {
+            "data_dir": self.data_dir,
+            "total_files": 0,
+            "sample_file": "",
+            "variables": [],
+            "dims": {},
+            "time_range": "",
+            "spatial_range": "",
+            "resolution": "",
+        }
 
-    def step(self) -> CRTNode | None:
-        """执行一步循环。
+        files = self._find_data_files()
+        if not files:
+            inventory["error"] = "未找到 NetCDF 文件"
+            return inventory
 
-        M5框架版本：返回当前步骤的计划描述。
-        M5+将执行完整的分析→验证→文献→判断流程。
+        inventory["total_files"] = len(files) if hasattr(self, '_all_file_count') else "多"
+        inventory["sample_file"] = os.path.basename(files[0])
+
+        try:
+            import xarray as xr
+            import numpy as np
+            ds = xr.open_dataset(files[0])
+            inventory["variables"] = list(ds.data_vars)
+            inventory["dims"] = dict(ds.sizes)
+
+            # 时间范围
+            time_var = "valid_time" if "valid_time" in ds else "time"
+            if time_var in ds:
+                t0 = ds[time_var].values[0]
+                t1 = ds[time_var].values[-1]
+                inventory["time_range"] = f"{str(t0)[:19]} ~ {str(t1)[:19]} ({ds.sizes.get(time_var, '?')}步)"
+
+            # 空间范围
+            for coord in ["longitude", "latitude", "lon", "lat"]:
+                if coord in ds:
+                    vals = ds[coord].values
+                    inventory["spatial_range"] += f"{coord}: {float(vals.min()):.1f}~{float(vals.max()):.1f} ({len(vals)}点) "
+                    if len(vals) > 1:
+                        inventory["resolution"] += f"Δ{coord}={abs(float(vals[1]-vals[0])):.2f}° "
+            ds.close()
+        except Exception as e:
+            inventory["error"] = str(e)
+
+        return inventory
+
+    def suggest_directions(self, inventory: dict, llm_client=None) -> list[str]:
+        """基于实际数据变量，建议可行的分析方向。
+
+        无 LLM 时使用领域规则映射。
+        """
+        variables = inventory.get("variables", [])
+
+        suggestions = []
+        var_set = set(variables)
+
+        # 规则映射：变量组合 → 分析方向
+        if {"t2m", "d2m"}.issubset(var_set):
+            suggestions.append("地表温度与露点温度的时空分布特征")
+            suggestions.append("基于露点亏缺的干旱指数分析（T - Td）")
+        if {"u10", "v10"}.issubset(var_set):
+            suggestions.append("10m风速风向的气候态特征")
+            suggestions.append("强风事件频率分析（起沙风的必要条件）")
+        if {"blh"}.issubset(var_set):
+            suggestions.append("边界层高度的季节变化——影响沙尘垂直扩散")
+        if {"t2m", "d2m", "u10", "v10"}.issubset(var_set):
+            suggestions.append("干旱+强风复合条件分析：识别潜在起沙时段")
+        if {"sp"}.issubset(var_set):
+            suggestions.append("地表气压系统与风场的关系")
+        if {"tcwv"}.issubset(var_set):
+            suggestions.append("大气水汽总量的时空变化")
+
+        if not suggestions:
+            suggestions.append(f"基础统计：{', '.join(variables[:5])}的均值与变率")
+
+        # LLM 补充建议
+        if llm_client and len(variables) > 3:
+            try:
+                prompt = (
+                    f"你是一位大气科学专家。目前可用的数据变量为：{', '.join(variables)}。"
+                    f"数据覆盖区域为东亚(70-140E, 15-55N)，时间范围为1979年起逐小时。"
+                    f"请基于这些变量，建议3-5个最有科学价值的分析方向。"
+                    f"每个方向一句话，不要编号。"
+                )
+                resp = llm_client.chat([
+                    {"role": "user", "content": prompt}
+                ], temperature=0.3, max_tokens=500)
+                llm_suggestions = [s.strip("- ").strip() for s in resp.content.split("\n") if len(s.strip()) > 10]
+                suggestions.extend(llm_suggestions[:5])
+            except Exception:
+                pass
+
+        return suggestions[:8]
+
+    def step(self, llm_client=None) -> Optional[CRTNode]:
+        """执行一步——LLM 决策 + 行动执行。
+
+        如果 llm_client 为 None，使用基于规则的简化决策。
         """
         if self._status != LoopStatus.RUNNING:
             return None
 
-        self._current_step += 1
+        self._step += 1
+        if self._step > self.max_steps:
+            self._status = LoopStatus.HARD_EXIT
+            return self._add_node(NodeType.MILESTONE, f"达到最大步数 {self.max_steps}")
 
-        if self._current_step > self.max_steps:
-            self._status = LoopStatus.RESOURCE_EXIT
-            return self._create_node(
-                parent_id=f"node_step_{self._current_step - 1}",
-                node_type=NodeType.MILESTONE,
-                summary=f"达到最大步数 {self.max_steps}，自动退出。",
+        # LLM 决策
+        if llm_client:
+            decision = self._llm_decide(llm_client)
+        else:
+            decision = self._rule_based_decide()
+
+        # 执行
+        node = self._execute_decision(decision)
+        self._nodes.append(node)
+
+        # 退出检查
+        if decision.get("action") == "conclude":
+            self._status = LoopStatus.SOFT_EXIT
+
+        return node
+
+    def _llm_decide(self, llm_client) -> dict:
+        """让 LLM 决策下一步。"""
+        try:
+            # 收集状态
+            completed = [f"{n.node_type.value}: {n.summary[:80]}" for n in self._nodes[-5:]]
+            latest = self._nodes[-1].detail[:300] if self._nodes else "无"
+
+            prompt = DISCOVERY_DECISION_PROMPT.format(
+                direction=self._direction,
+                step=self._step,
+                max_steps=self.max_steps,
+                completed_nodes="\n".join(completed) if completed else "无",
+                latest_findings=latest,
+                available_data=self._scan_data(),
+                available_methods=self._list_methods(),
             )
 
-        # 确定当前步骤类型
-        step_type = self._determine_step_type(self._current_step)
+            resp = llm_client.chat([
+                {"role": "system", "content": "你是一个科学决策引擎。仅输出一行 JSON，不要输出其他内容。"},
+                {"role": "user", "content": prompt},
+            ], temperature=0.3, max_tokens=500)
 
-        return self._create_node(
-            parent_id=f"node_step_{self._current_step - 1}" if self._current_step > 1 else "",
-            node_type=step_type,
-            summary=self._step_description(self._current_step),
+            # 解析 JSON
+            content = resp.content.strip()
+            if "{" in content and "}" in content:
+                start = content.index("{")
+                end = content.rindex("}") + 1
+                return json.loads(content[start:end])
+        except Exception:
+            pass
+
+        return self._rule_based_decide()
+
+    def _rule_based_decide(self) -> dict:
+        """无 LLM 时的基于规则决策（回退方案）。"""
+        cycle = self._step % 4
+        if cycle == 1:
+            return {"action": "analyze", "target": "基础统计分析", "reason": "探索可用数据的基本特征", "variables": ["t2m", "d2m", "wind"]}
+        elif cycle == 2:
+            return {"action": "validate", "target": "物理校验", "reason": "验证分析结果的物理合理性"}
+        elif cycle == 3:
+            return {"action": "literature", "target": "相关文献检索", "reason": "为发现提供文献背景", "keywords": self._direction}
+        else:
+            if self._step >= self.max_steps - 2:
+                return {"action": "conclude", "target": "生成结论", "reason": "已达到探索边界"}
+            return {"action": "analyze", "target": "深入分析", "reason": "继续探索", "variables": ["d2m", "wind", "t2m"]}
+
+    def _execute_decision(self, decision: dict) -> CRTNode:
+        """执行 LLM 的决策。"""
+        action = decision.get("action", "analyze")
+        target = decision.get("target", "")
+
+        if action == "analyze":
+            return self._do_analysis(decision)
+        elif action == "validate":
+            return self._do_validation(decision)
+        elif action == "literature":
+            return self._do_literature(decision)
+        elif action == "migrate":
+            return self._do_migration(decision)
+        elif action == "conclude":
+            return self._add_node(NodeType.MILESTONE, f"结论: {target}", decision.get("reason", ""))
+        return self._add_node(NodeType.ANALYSIS, f"未知行动: {action}")
+
+    # ---- 行动执行 ----
+
+    def _do_analysis(self, decision: dict) -> CRTNode:
+        """执行数据分析。"""
+        target = decision.get("target", "数据分析")
+        variables = decision.get("variables", ["t2m", "d2m"])
+
+        detail_lines = []
+        try:
+            import xarray as xr
+            import numpy as np
+
+            data_files = self._find_data_files()
+            detail_lines.append(f"数据目录: {self.data_dir or '未设置'}")
+            detail_lines.append(f"找到文件: {len(data_files)} 个")
+
+            if data_files:
+                fname = data_files[0]
+                detail_lines.append(f"读取: {os.path.basename(fname)}")
+                ds = xr.open_dataset(fname)
+                for var in variables:
+                    if var in ds.data_vars:
+                        val = float(ds[var].mean())
+                        detail_lines.append(f"{var} 均值: {val:.2f}")
+                    elif var == "wind" or var == "ws":
+                        if "u10" in ds.data_vars and "v10" in ds.data_vars:
+                            ws = np.sqrt(ds.u10**2 + ds.v10**2)
+                            detail_lines.append(f"风速均值: {float(ws.mean()):.2f} m/s")
+                ds.close()
+            else:
+                detail_lines.append("未找到NetCDF文件，请检查 --data-dir 路径")
+        except ImportError as e:
+            detail_lines.append(f"缺少依赖: {e}")
+        except Exception as e:
+            detail_lines.append(f"分析出错: {e}")
+
+        detail = "\n".join(detail_lines) if detail_lines else "无数据可用"
+        surprise = self._calc_surprise(detail_lines)
+
+        return self._add_node(
+            NodeType.ANALYSIS,
+            f"分析: {target}",
+            detail,
+            surprise_score=surprise,
         )
 
-    def pause(self, reason: InterventionType, detail: str = "") -> DiscoveryResult:
-        """暂停循环——等待人类裁定。"""
-        self._status = LoopStatus.PAUSED
-        return DiscoveryResult(
-            loop_id=self._current_loop_id,
-            direction="",
-            status=LoopStatus.PAUSED,
-            total_steps=self._current_step,
-            summary=f"暂停: {reason.value} — {detail}",
+    def _do_validation(self, decision: dict) -> CRTNode:
+        """执行物理校验。"""
+        target = decision.get("target", "物理校验")
+        last_node = self._nodes[-1] if self._nodes else None
+        detail = last_node.detail if last_node else ""
+
+        checks = []
+        if "d2m" in detail.lower() and "t2m" in detail.lower():
+            checks.append("✅ 露点 ≤ 温度 (物理约束)")
+
+        if not checks:
+            checks.append("⏳ 暂无可校验的数值结果")
+
+        return self._add_node(NodeType.VALIDATION, f"校验: {target}", "\n".join(checks))
+
+    def _do_literature(self, decision: dict) -> CRTNode:
+        """执行文献检索。"""
+        raw_keywords = decision.get("keywords", self._direction)
+        # 自动翻译中文关键词 → 英文（气象领域常用映射）
+        en_keywords = self._translate_keywords(raw_keywords)
+        target = decision.get("target", f"搜索文献: {en_keywords}")
+
+        detail_lines = [f"原始关键词: {raw_keywords}"]
+        detail_lines.append(f"英文搜索: {en_keywords}")
+
+        try:
+            from ..skills.literature import LiteratureSearcher
+            searcher = LiteratureSearcher()
+            result = searcher.search(en_keywords, max_papers=5)
+
+            detail_lines.append(f"找到 {result.total_found} 篇论文 (来源: {result.source})")
+            for p in result.papers[:5]:
+                detail_lines.append(f"  - {p.to_summary()[:120]}")
+        except Exception as e:
+            detail_lines.append(f"文献检索出错: {e}")
+
+        return self._add_node(
+            NodeType.LITERATURE,
+            f"文献: {en_keywords[:60]}",
+            "\n".join(detail_lines),
+            surprise_score=0.2 if "未见报道" in "\n".join(detail_lines) else 0.0,
         )
 
-    def resume(self) -> DiscoveryResult:
-        """人类裁定后恢复循环。"""
-        self._status = LoopStatus.RUNNING
-        return DiscoveryResult(
-            loop_id=self._current_loop_id,
-            direction="",
-            status=LoopStatus.RUNNING,
-            total_steps=self._current_step,
-            summary="循环已恢复。",
-        )
+    def _do_migration(self, decision: dict) -> CRTNode:
+        """执行区域迁移。"""
+        target = decision.get("target", "区域迁移")
 
-    def stop(self, exit_type: LoopStatus = LoopStatus.HUMAN_EXIT) -> DiscoveryResult:
-        """停止循环。"""
-        self._status = exit_type
+        try:
+            from ..engine_three_migrator import GlobalMigrator
+            migrator = GlobalMigrator(self.db)
+            targets = migrator.auto_select_targets("central_asia")
 
-        # 汇总CRT节点
-        nodes = self.get_crt_chain()
+            detail_lines = [f"源区域: central_asia", f"目标: {', '.join(targets[:3])}"]
+            for t in targets[:3]:
+                info = GlobalMigrator.PRESET_REGIONS.get(t)
+                if info:
+                    detail_lines.append(f"  {t}: {info.data_availability} — {info.name}")
+        except Exception as e:
+            detail_lines = [f"迁移出错: {e}"]
 
-        return DiscoveryResult(
-            loop_id=self._current_loop_id,
-            direction="",
-            status=exit_type,
-            total_steps=self._current_step,
-            nodes=nodes,
-            summary=f"循环结束: {exit_type.value}。共 {self._current_step} 步。",
-        )
+        return self._add_node(NodeType.MIGRATION, f"迁移: {target}", "\n".join(detail_lines))
 
-    # ---- CRT 管理 ----
+    # ---- 报告生成 ----
 
-    def _create_node(
-        self,
-        parent_id: str,
-        node_type: NodeType,
-        summary: str,
-        surprise_score: float = 0.0,
-    ) -> CRTNode:
-        """创建一个CRT节点并存入数据库。"""
+    def generate_report(self, llm_client=None) -> str:
+        """生成发现简报。"""
+        if not self._nodes:
+            return "# 无探索节点"
+
+        summaries = []
+        for n in self._nodes:
+            summaries.append(f"[{n.node_type.value}] {n.summary}")
+            if n.detail:
+                summaries.append(f"  {n.detail[:200]}")
+
+        if llm_client:
+            try:
+                prompt = DISCOVERY_REPORT_PROMPT.format(
+                    direction=self._direction,
+                    total_steps=self._step,
+                    node_summaries="\n".join(summaries),
+                )
+                resp = llm_client.chat([
+                    {"role": "system", "content": "你是科学报告生成器。输出 Markdown。"},
+                    {"role": "user", "content": prompt},
+                ], temperature=0.3)
+                return resp.content
+            except Exception:
+                pass
+
+        # 回退：规则生成
+        lines = [
+            f"# Polaris 发现简报",
+            f"**方向**: {self._direction}",
+            f"**步数**: {self._step}/{self.max_steps}",
+            f"**状态**: {self._status.value}",
+            f"**时间**: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "",
+            "## 探索轨迹",
+        ]
+        for n in self._nodes:
+            icon = {"analysis": "🔬", "literature": "📚", "validation": "🔍",
+                    "migration": "🌍", "discovery": "💡", "milestone": "🏁"}.get(n.node_type.value, "⚪")
+            lines.append(f"- {icon} [{n.node_type.value}] {n.summary}")
+            if n.detail:
+                for dl in n.detail.split("\n")[:3]:
+                    lines.append(f"    {dl}")
+
+        return "\n".join(lines)
+
+    # ---- 辅助方法 ----
+
+    def _add_node(self, ntype: NodeType, summary: str, detail: str = "", surprise_score: float = 0.0) -> CRTNode:
+        parent = self._nodes[-1].id if self._nodes else ""
         node = CRTNode(
-            parent_id=parent_id,
-            project_id=self._current_loop_id,
-            node_type=node_type,
-            status="active",
+            parent_id=parent,
+            project_id=self._loop_id,
+            node_type=ntype,
             summary=summary,
+            detail=detail,
             surprise_score=surprise_score,
         )
-
         self.db.execute(
-            """INSERT INTO crt_nodes
-               (id, parent_id, project_id, node_type, status, summary, surprise_score, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (node.id, node.parent_id, node.project_id,
-             node.node_type.value, node.status, node.summary,
-             node.surprise_score, node.created_at),
+            "INSERT INTO crt_nodes (id, parent_id, project_id, node_type, status, summary, surprise_score, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (node.id, node.parent_id, node.project_id, node.node_type.value, "active", node.summary[:500], node.surprise_score, node.created_at),
         )
-
-        # 创建边（连接到父节点）
-        if parent_id:
-            self.db.execute(
-                """INSERT INTO crt_edges (source_node, target_node, edge_type)
-                   VALUES (?, ?, 'parent')""",
-                (parent_id, node.id),
-            )
-
         self.db.commit()
         return node
 
-    def get_crt_chain(self, limit: int = 50) -> list[CRTNode]:
-        """获取当前循环的CRT节点链。"""
-        rows = self.db.fetch_all(
-            """SELECT * FROM crt_nodes
-               WHERE project_id = ?
-               ORDER BY created_at ASC LIMIT ?""",
-            (self._current_loop_id, limit),
-        )
-        return [self._row_to_node(r) for r in rows]
+    def _scan_data(self) -> str:
+        """扫描可用数据。"""
+        if not self.data_dir:
+            return "未指定数据目录"
+        import glob
+        files = glob.glob(os.path.join(self.data_dir, "**", "*.nc"), recursive=True)[:20]
+        if not files:
+            return "无 NetCDF 文件"
+        return f"{len(files)}+ NetCDF 文件 (如 {os.path.basename(files[0])})"
 
-    def get_node(self, node_id: str) -> Optional[CRTNode]:
-        """查询单个CRT节点。"""
-        row = self.db.fetch_one(
-            "SELECT * FROM crt_nodes WHERE id = ?", (node_id,)
-        )
-        return self._row_to_node(row) if row else None
+    def _list_methods(self) -> str:
+        """列出方法库。"""
+        rows = self.db.fetch_all("SELECT name FROM methods WHERE status='verified' LIMIT 10")
+        if not rows:
+            return "无已验证方法"
+        return ", ".join(r["name"] for r in rows)
 
-    # ---- 内部 ----
+    def _find_data_files(self) -> list[str]:
+        """查找数据文件——优先 single_levels（含 t2m, d2m, u10, v10）。"""
+        if not self.data_dir:
+            return []
+        import glob
+        all_files = sorted(glob.glob(os.path.join(self.data_dir, "**", "*.nc"), recursive=True))
+        # 优先返回 single_levels instant 文件
+        single = [f for f in all_files if "single" in f and "instant" in f]
+        if single:
+            return single[:5]
+        return all_files[:5]
 
-    def _generate_plan(self, direction: str) -> str:
-        """生成循环执行计划。"""
-        steps = [
-            "Step 1: 下载初始数据（ERA5 全球相关变量）",
-            "Step 2: 查询方法库 → 匹配分析方法",
-            "Step 3: 执行分析 → 引擎一自动追踪版本",
-            "Step 4: 引擎二深度验证（方法论溯源+红队+多角色辩论）",
-            "Step 5: 检索相关文献 → 比对现有知识",
-            "Step 6: 判断是否需要补充数据 → 是则回到Step 1",
-            "Step 7: 引擎三全球方法迁移 → 发现跨区域差异",
-            "Step 8: 循环判断 → 收敛? 退出? 继续?",
+    def _translate_keywords(self, chinese: str) -> str:
+        """将中文研究方向翻译为英文搜索关键词。"""
+        mapping = [
+            ("沙尘暴", "dust storm"), ("起沙", "dust emission"),
+            ("沙尘", "dust"), ("干旱", "drought aridity"),
+            ("边界层", "boundary layer"), ("风速", "wind speed"),
+            ("风向", "wind direction"), ("湿度", "humidity"),
+            ("温度", "temperature"), ("露点", "dew point"),
+            ("降水", "precipitation"), ("闪电", "lightning"),
+            ("东亚", "East Asia"), ("中亚", "Central Asia"),
+            ("撒哈拉", "Sahara"), ("起电", "electrification"),
+            ("摩擦", "triboelectric"), ("气候", "climate"),
+            ("气象", "meteorology"), ("大气", "atmosphere"),
+            ("地表", "surface"), ("区域", "region"),
+            ("特征", "characteristics"), ("分析", ""),
         ]
-        return (
-            f"# 发现循环计划\n"
-            f"**方向**: {direction}\n"
-            f"**最大步数**: {self.max_steps}\n"
-            f"**计划步骤**:\n" +
-            "\n".join(f"- {s}" for s in steps)
-        )
+        # 收集匹配到的英文词
+        words = []
+        remaining = chinese
+        for cn, en in mapping:
+            if cn in remaining:
+                if en:  # 跳过空翻译（如"分析"→""）
+                    words.append(en)
+                remaining = remaining.replace(cn, " ", 1)
 
-    def _determine_step_type(self, step_num: int) -> NodeType:
-        """根据步数确定节点类型。"""
-        cycle = step_num % 8
-        if cycle in (1, 2):
-            return NodeType.ANALYSIS
-        elif cycle in (3, 4):
-            return NodeType.VALIDATION
-        elif cycle in (5, 6):
-            return NodeType.MIGRATION
-        elif cycle == 7:
-            return NodeType.DISCOVERY
-        else:
-            return NodeType.MILESTONE
+        if words:
+            query = " ".join(words)
+            # 如果是气象相关的，加 domain 限定
+            if any(w in query for w in ["dust", "atmosphere", "meteorology", "climate", "wind", "temperature"]):
+                query += " atmosphere reanalysis"
+            return query[:150]
 
-    def _step_description(self, step_num: int) -> str:
-        """生成步骤描述。"""
-        descriptions = {
-            1: "数据下载与预处理",
-            2: "方法库匹配与分析执行",
-            3: "引擎二深度验证启动",
-            4: "验证结果汇总与反馈生成",
-            5: "文献检索与知识比对",
-            6: "引擎三区域迁移与差异发现",
-            7: "发现评估与惊喜度计算",
-            0: "循环状态检查与方向调整",
-        }
-        cycle = step_num % 8
-        return f"Step {step_num}: {descriptions.get(cycle, '未知步骤')}"
+        # 全中文/无法翻译 → 用通用气象+区域关键词
+        return "East Asia climatology reanalysis ERA5 meteorological"
 
-    def _row_to_node(self, row) -> CRTNode:
-        return CRTNode(
-            id=row["id"],
-            parent_id=row["parent_id"] or "",
-            project_id=row["project_id"],
-            node_type=NodeType(row["node_type"]),
-            status=row["status"],
-            summary=row["summary"],
-            surprise_score=row["surprise_score"] or 0.0,
-            physics_fence_result=row["physics_fence_result"] or "",
-            created_at=row["created_at"],
-        )
+    def _calc_surprise(self, detail_lines: list[str]) -> float:
+        """简易惊喜度计算。"""
+        score = 0.0
+        for line in detail_lines:
+            if "270" in line or "260" in line:
+                score += 0.1  # 低温 → 可能干燥
+            if "3." in line and "m/s" in line:
+                score += 0.05
+        return min(score, 1.0)

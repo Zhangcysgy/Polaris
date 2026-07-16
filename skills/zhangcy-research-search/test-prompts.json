@@ -1,0 +1,6 @@
+[
+  {"id": 1, "prompt": "帮我搜一下关于 'machine learning for precipitation nowcasting' 的最新论文，2023-2025 年。自动保存到 Zotero。", "expected": "触发自动Zotero模式，搜索大气科学+多后端，返回论文列表并自动推送"},
+  {"id": 2, "prompt": "查这篇论文的 DOI：'Deep residual learning for image recognition' (He et al., CVPR 2015)", "expected": "精确DOI查找，路由到Crossref后端"},
+  {"id": 3, "prompt": "搜关于 'sandstorm dust aerosol radiative forcing over East Asia' 的论文。加入 Zotero。", "expected": "大气科学路由+气象期刊白名单，按需推送Zotero"},
+  {"id": 4, "prompt": "arXiv physics.ao-ph 上最近有没有关于 'typhoon intensity prediction' 的新预印本？", "expected": "路由到arXiv physics.ao-ph后端，返回预印本列表"}
+]
