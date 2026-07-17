@@ -97,6 +97,38 @@ BUILTIN_CAPABILITIES: list[AnalysisCapability] = [
         output_type="numeric",
         function_name="compute_trend",
     ),
+    AnalysisCapability(
+        name="多年气候态",
+        description="计算多年平均（气候态）和标准差。需要多个年份的数据文件",
+        keywords=["多年", "multi-year", "climatology", "气候态", "多年平均", "年际", "长期", "44年", "1979", "历年", "逐年"],
+        required_vars=[],
+        output_type="numeric",
+        function_name="compute_climatology",
+    ),
+    AnalysisCapability(
+        name="年际趋势",
+        description="逐年计算均值，拟合线性趋势，评估变化速率",
+        keywords=["年际趋势", "interannual trend", "逐年趋势", "年代际", "decadal", "长期变化趋势", "时间序列趋势分析"],
+        required_vars=[],
+        output_type="numeric",
+        function_name="compute_interannual_trend",
+    ),
+    AnalysisCapability(
+        name="季节循环",
+        description="按月份分组计算多年平均季节循环",
+        keywords=["季节", "seasonal", "annual cycle", "季节变化", "季节循环", "逐月气候态", "年循环"],
+        required_vars=[],
+        output_type="numeric",
+        function_name="compute_seasonal_cycle",
+    ),
+    AnalysisCapability(
+        name="异常检测",
+        description="将单个月份与多年气候态对比，计算异常值（距平/标准化距平）",
+        keywords=["异常", "anomaly", "距平", "极端", "异常值", "偏离", "outlier", "异常年份", "extreme year"],
+        required_vars=[],
+        output_type="numeric",
+        function_name="compute_anomaly",
+    ),
 ]
 
 
@@ -217,28 +249,41 @@ class CapabilityResolver:
             if all(v in available_vars for v in c.required_vars)
         ]
 
-    def execute(self, capability: AnalysisCapability, data_file: str) -> dict:
-        """执行一个分析能力，返回结果。"""
+    def execute(self, capability: AnalysisCapability, data_file: str, all_files: list[str] | None = None) -> dict:
+        """执行一个分析能力，返回结果。
+
+        Args:
+            capability: 要执行的能力
+            data_file: 单文件路径（单月分析用）
+            all_files: 多文件路径列表（多年分析用）
+        """
         func_name = capability.function_name
 
-        if func_name == "compute_mean":
-            return self._exec_compute_mean(data_file, capability)
-        elif func_name == "compute_dewpoint_depression":
-            return self._exec_dewpoint_depression(data_file, capability)
-        elif func_name == "compute_wind_threshold_frequency":
-            return self._exec_wind_threshold(data_file, capability)
-        elif func_name == "compute_std":
-            return self._exec_compute_std(data_file, capability)
-        elif func_name == "compute_extremes":
-            return self._exec_extremes(data_file, capability)
-        elif func_name == "compute_percentiles":
-            return self._exec_percentiles(data_file, capability)
-        elif func_name == "compute_compound_drought_wind":
-            return self._exec_compound(data_file, capability)
-        elif func_name == "compute_trend":
-            return self._exec_trend(data_file, capability)
-        else:
+        # 函数名 → 方法名映射
+        method_map = {
+            "compute_mean": "_exec_compute_mean",
+            "compute_dewpoint_depression": "_exec_dewpoint_depression",
+            "compute_wind_threshold_frequency": "_exec_wind_threshold",
+            "compute_std": "_exec_compute_std",
+            "compute_extremes": "_exec_extremes",
+            "compute_percentiles": "_exec_percentiles",
+            "compute_compound_drought_wind": "_exec_compound",
+            "compute_trend": "_exec_trend",
+            "compute_climatology": "_exec_compute_climatology",
+            "compute_interannual_trend": "_exec_compute_interannual_trend",
+            "compute_seasonal_cycle": "_exec_compute_seasonal_cycle",
+            "compute_anomaly": "_exec_compute_anomaly",
+        }
+
+        method_name = method_map.get(func_name)
+        if method_name is None:
             return {"error": f"未知能力: {func_name}", "capability": capability.name}
+
+        if func_name in ["compute_climatology", "compute_interannual_trend",
+                          "compute_seasonal_cycle", "compute_anomaly"]:
+            return getattr(self, method_name)(all_files or [data_file], capability)
+        else:
+            return getattr(self, method_name)(data_file, capability)
 
     # ---- 具体执行函数 ----
 
@@ -341,3 +386,194 @@ class CapabilityResolver:
                     results[f"{var}_trend_slope"] = float(slope)
         ds.close()
         return {"method": cap.name, "results": results, "note": "简化趋势（仅前1000点），精确趋势需逐月数据"}
+
+    # ---- 多年分析执行函数 ----
+
+    def _exec_compute_climatology(self, files: list[str], cap: AnalysisCapability) -> dict:
+        """多年气候态：计算多年平均和标准差。"""
+        import xarray as xr
+        import numpy as np
+
+        if len(files) < 2:
+            return {"method": cap.name, "results": {}, "error": f"多年分析需要至少2个文件，当前{len(files)}个"}
+
+        results = {}
+        try:
+            ds = xr.open_mfdataset(files[:min(len(files), 100)], combine='nested', concat_dim='valid_time')
+            for var in ["t2m", "d2m", "u10", "v10"]:
+                if var in ds.data_vars:
+                    results[f"{var}_clim_mean"] = float(ds[var].mean())
+                    results[f"{var}_clim_std"] = float(ds[var].std())
+                    results[f"{var}_clim_years"] = len(files)
+            # 露点亏缺
+            if "t2m" in ds.data_vars and "d2m" in ds.data_vars:
+                dd = ds.t2m - ds.d2m
+                results["dd_clim_mean"] = float(dd.mean())
+                results["dd_clim_std"] = float(dd.std())
+            ds.close()
+        except Exception as e:
+            # 回退：逐文件读取
+            return self._exec_climatology_fallback(files, cap)
+
+        return {"method": cap.name, "results": results, "note": f"基于{len(files)}个文件的多年气候态"}
+
+    def _exec_climatology_fallback(self, files: list[str], cap: AnalysisCapability) -> dict:
+        """逐文件读取计算气候态（回退方案）。"""
+        import xarray as xr
+        import numpy as np
+
+        accum = {"t2m": [], "d2m": [], "dd": [], "ws": []}
+        for f in files[:min(len(files), 60)]:  # 最多60个文件
+            try:
+                ds = xr.open_dataset(f)
+                if "t2m" in ds.data_vars:
+                    accum["t2m"].append(float(ds.t2m.mean()))
+                if "d2m" in ds.data_vars:
+                    accum["d2m"].append(float(ds.d2m.mean()))
+                if "t2m" in ds.data_vars and "d2m" in ds.data_vars:
+                    accum["dd"].append(float((ds.t2m - ds.d2m).mean()))
+                if "u10" in ds.data_vars and "v10" in ds.data_vars:
+                    accum["ws"].append(float(np.sqrt(ds.u10**2 + ds.v10**2).mean()))
+                ds.close()
+            except Exception:
+                continue
+
+        results = {}
+        for k, vals in accum.items():
+            if vals:
+                arr = np.array(vals)
+                results[f"{k}_clim_mean"] = float(arr.mean())
+                results[f"{k}_clim_std"] = float(arr.std())
+                results[f"{k}_clim_min"] = float(arr.min())
+                results[f"{k}_clim_max"] = float(arr.max())
+
+        return {"method": cap.name, "results": results, "note": f"基于{len(accum.get('t2m',[]))}个文件（逐文件聚合）"}
+
+    def _exec_compute_interannual_trend(self, files: list[str], cap: AnalysisCapability) -> dict:
+        """年际趋势：逐年计算均值并拟合趋势。"""
+        import xarray as xr
+        import numpy as np
+        import re
+
+        # 按年份分组
+        yearly = {}
+        for f in files[:200]:
+            match = re.search(r'(\d{4})', os.path.basename(f) if hasattr(os, 'path') else f.split('\\')[-1])
+            if match:
+                yr = int(match.group(1))
+                if yr not in yearly:
+                    yearly[yr] = []
+                yearly[yr].append(f)
+
+        results = {}
+        for var_name in ["t2m", "d2m", "dd"]:
+            annual_means = []
+            years_list = []
+            for yr in sorted(yearly.keys()):
+                try:
+                    ds = xr.open_mfdataset(yearly[yr][:12], combine='nested', concat_dim='valid_time')
+                    if var_name == "dd":
+                        if "t2m" in ds.data_vars and "d2m" in ds.data_vars:
+                            val = float((ds.t2m - ds.d2m).mean())
+                        else:
+                            continue
+                    elif var_name in ds.data_vars:
+                        val = float(ds[var_name].mean())
+                    else:
+                        continue
+                    ds.close()
+                    annual_means.append(val)
+                    years_list.append(yr)
+                except Exception:
+                    continue
+
+            if len(annual_means) > 3:
+                x = np.array(years_list)
+                y = np.array(annual_means)
+                slope, intercept = np.polyfit(x, y, 1)
+                trend_per_decade = slope * 10
+                results[f"{var_name}_trend_per_decade"] = float(trend_per_decade)
+                results[f"{var_name}_trend_years"] = f"{min(years_list)}-{max(years_list)}"
+                results[f"{var_name}_trend_n"] = len(years_list)
+                # 趋势显著性（简化：R²）
+                y_pred = slope * x + intercept
+                ss_res = np.sum((y - y_pred) ** 2)
+                ss_tot = np.sum((y - np.mean(y)) ** 2)
+                results[f"{var_name}_trend_r2"] = float(1 - ss_res / ss_tot) if ss_tot > 0 else 0
+
+        return {"method": cap.name, "results": results, "note": f"基于{len(yearly)}年的年际趋势分析"}
+
+    def _exec_compute_seasonal_cycle(self, files: list[str], cap: AnalysisCapability) -> dict:
+        """季节循环：按月份分组计算多年平均。"""
+        import xarray as xr
+        import numpy as np
+        import re
+
+        monthly = {m: {"t2m": [], "dd": [], "ws": []} for m in range(1, 13)}
+        for f in files[:200]:
+            match = re.search(r'(\d{4})(\d{2})', os.path.basename(f) if hasattr(os, 'path') else f.split('\\')[-1])
+            if not match:
+                match = re.search(r'_(\d{4})(\d{2})', f)
+            if match:
+                month = int(match.group(2))
+                if 1 <= month <= 12:
+                    try:
+                        ds = xr.open_dataset(f)
+                        monthly[month]["t2m"].append(float(ds.t2m.mean()) if "t2m" in ds.data_vars else None)
+                        if "t2m" in ds.data_vars and "d2m" in ds.data_vars:
+                            monthly[month]["dd"].append(float((ds.t2m - ds.d2m).mean()))
+                        if "u10" in ds.data_vars and "v10" in ds.data_vars:
+                            monthly[month]["ws"].append(float(np.sqrt(ds.u10**2 + ds.v10**2).mean()))
+                        ds.close()
+                    except Exception:
+                        continue
+
+        results = {}
+        for var in ["t2m", "dd", "ws"]:
+            arr = np.array([np.nanmean(monthly[m][var]) for m in range(1, 13) if monthly[m][var]])
+            if len(arr) == 12:
+                results[f"{var}_jan"] = float(arr[0]) if not np.isnan(arr[0]) else 0
+                results[f"{var}_jul"] = float(arr[6]) if not np.isnan(arr[6]) else 0
+                results[f"{var}_annual_range"] = float(np.nanmax(arr) - np.nanmin(arr))
+
+        return {"method": cap.name, "results": results, "note": "12个月季节循环（多年平均）"}
+
+    def _exec_compute_anomaly(self, files: list[str], cap: AnalysisCapability) -> dict:
+        """异常检测：将第一个文件与其余文件的气候态对比。"""
+        import xarray as xr
+        import numpy as np
+
+        if len(files) < 3:
+            return {"method": cap.name, "results": {}, "error": "需要至少3个文件（1个目标 + ≥2个气候态）"}
+
+        target_file = files[0]
+        climate_files = files[1:min(len(files), 100)]
+
+        try:
+            ds_target = xr.open_dataset(target_file)
+            ds_clim = xr.open_mfdataset(climate_files, combine='nested', concat_dim='valid_time')
+
+            results = {}
+            for var in ["t2m", "d2m"]:
+                if var in ds_target.data_vars and var in ds_clim.data_vars:
+                    target_mean = float(ds_target[var].mean())
+                    clim_mean = float(ds_clim[var].mean())
+                    clim_std = float(ds_clim[var].std())
+                    anomaly = target_mean - clim_mean
+                    z_score = anomaly / clim_std if clim_std > 0 else 0
+                    results[f"{var}_anomaly"] = round(anomaly, 2)
+                    results[f"{var}_zscore"] = round(z_score, 2)
+                    results[f"{var}_clim_mean"] = round(clim_mean, 2)
+
+            ds_target.close()
+            ds_clim.close()
+        except Exception as e:
+            return {"method": cap.name, "results": {}, "error": str(e)}
+
+        interpretation = ""
+        if abs(results.get("t2m_zscore", 0)) > 2:
+            interpretation += f"温度异常显著 (z={results['t2m_zscore']:.1f}σ). "
+        else:
+            interpretation += f"温度在正常范围 (z={results.get('t2m_zscore',0):.1f}σ). "
+
+        return {"method": cap.name, "results": results, "note": interpretation}

@@ -348,7 +348,7 @@ class DiscoveryLoop:
             resp = llm_client.chat([
                 {"role": "system", "content": "你是科学数据分析规划器。仅输出 JSON 数组，不要其他内容。"},
                 {"role": "user", "content": prompt},
-            ], temperature=0.3, max_tokens=1500)
+            ], temperature=0.1, max_tokens=1500, no_thinking=True)
 
             content = resp.content.strip()
             if "[" in content and "]" in content:
@@ -500,17 +500,33 @@ class DiscoveryLoop:
                             f"分析完毕: {len(available)}个能力全部执行", "\n".join(detail_lines))
 
             if match.matched and match.capability:
-                # 精确匹配 → 执行
-                result = resolver.execute(match.capability, fname)
-                detail_lines.append(f"执行: {match.capability.name} ({match.reason})")
+                # 精确匹配 → 执行（多年能力传全部文件）
+                cap = match.capability
+                multi_year_funcs = ["compute_climatology", "compute_interannual_trend",
+                                    "compute_seasonal_cycle", "compute_anomaly"]
+                if cap.function_name in multi_year_funcs:
+                    all_files = self._find_data_files(max_files=50)
+                    result = resolver.execute(cap, fname, all_files=all_files)
+                    detail_lines.append(f"多年分析: {len(all_files)}个文件")
+                else:
+                    result = resolver.execute(cap, fname)
+                detail_lines.append(f"执行: {cap.name} ({match.reason})")
                 detail_lines.append(self._format_results(result))
                 surprise = self._calc_surprise_from_results(result)
 
             elif match.fallback:
                 # 降级匹配 → 执行替代方案
-                result = resolver.execute(match.fallback, fname)
+                fb = match.fallback
+                multi_year_funcs = ["compute_climatology", "compute_interannual_trend",
+                                    "compute_seasonal_cycle", "compute_anomaly"]
+                if fb.function_name in multi_year_funcs:
+                    all_files = self._find_data_files(max_files=50)
+                    result = resolver.execute(fb, fname, all_files=all_files)
+                    detail_lines.append(f"多年分析: {len(all_files)}个文件")
+                else:
+                    result = resolver.execute(fb, fname)
                 detail_lines.append(f"降级: {match.reason}")
-                detail_lines.append(f"执行替代: {match.fallback.name}")
+                detail_lines.append(f"执行替代: {fb.name}")
                 detail_lines.append(self._format_results(result))
                 surprise = self._calc_surprise_from_results(result)
 
@@ -718,17 +734,56 @@ class DiscoveryLoop:
             return "无已验证方法"
         return ", ".join(r["name"] for r in rows)
 
-    def _find_data_files(self) -> list[str]:
-        """查找数据文件——优先 single_levels（含 t2m, d2m, u10, v10）。"""
+    def _find_data_files(self, pattern: str = "single", max_files: int = 200) -> list[str]:
+        """查找数据文件——优先 single_levels instant 文件。
+
+        Args:
+            pattern: 文件名匹配模式 ("single" | "pressure" | "accum" | "all")
+            max_files: 最大返回文件数
+        """
         if not self.data_dir:
             return []
         import glob
         all_files = sorted(glob.glob(os.path.join(self.data_dir, "**", "*.nc"), recursive=True))
-        # 优先返回 single_levels instant 文件
-        single = [f for f in all_files if "single" in f and "instant" in f]
-        if single:
-            return single[:5]
-        return all_files[:5]
+
+        if pattern == "single":
+            files = [f for f in all_files if "single" in f and "instant" in f]
+        elif pattern == "pressure":
+            files = [f for f in all_files if "pressure" in f]
+        elif pattern == "accum":
+            files = [f for f in all_files if "accum" in f]
+        else:
+            files = all_files
+
+        return files[:max_files]
+
+    def _get_data_summary(self) -> dict:
+        """获取数据概览：年份范围、总文件数、变量列表。"""
+        files = self._find_data_files(max_files=5000)
+        if not files:
+            return {"error": "无数据"}
+
+        import xarray as xr
+        import re
+
+        # 提取年份信息
+        years = set()
+        for f in files:
+            match = re.search(r'(\d{4})', os.path.basename(f))
+            if match:
+                years.add(int(match.group(1)))
+
+        ds = xr.open_dataset(files[0])
+        vars_list = list(ds.data_vars)
+        ds.close()
+
+        return {
+            "total_files": len(files),
+            "year_range": f"{min(years)}-{max(years)}" if years else "未知",
+            "num_years": len(years),
+            "variables": vars_list,
+            "sample_file": os.path.basename(files[0]),
+        }
 
     def _translate_keywords(self, chinese: str) -> str:
         """将中文研究方向翻译为英文搜索关键词。"""

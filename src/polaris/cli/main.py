@@ -597,6 +597,12 @@ def discover_start(direction: str, max_steps: int, dry_run: bool, data_dir: str 
         click.echo(f"  空间: {inventory['spatial_range']}")
         click.echo(f"  分辨率: {inventory['resolution']}")
 
+        # 多年数据范围
+        summary = loop._get_data_summary()
+        if summary.get("num_years", 0) > 1:
+            click.echo(f"  数据跨度: {summary['year_range']} ({summary['num_years']}年, {summary['total_files']}文件)")
+            click.echo(f"  [MultiYear] 多年分析能力已激活：气候态 | 年际趋势 | 季节循环 | 异常检测")
+
         # ──── 第二步：建议分析方向 ────
         llm = None
         if use_llm:

@@ -44,11 +44,13 @@ class LLMResponse:
 class LLMConfig:
     """单个 LLM 后端的配置。"""
     provider: str            # "deepseek" | "zhipu"
-    model: str               # "deepseek-chat" | "glm-4-plus"
+    model: str               # "deepseek-chat" | "deepseek-v4-pro"
     api_key: str = ""
     base_url: str = ""
     temperature: float = 0.3
     max_tokens: int = 8192
+    reasoning_effort: str = ""    # v4 专属: high/medium/low
+    thinking_enabled: bool = False  # v4 专属
 
 
 class LLMClient:
@@ -103,9 +105,11 @@ class LLMClient:
             provider=llm_cfg.get("provider", "deepseek"),
             model=llm_cfg.get("model", "deepseek-chat"),
             api_key=api_key,
-            base_url=llm_cfg.get("base_url", "https://api.deepseek.com/v1"),
+            base_url=llm_cfg.get("base_url", "https://api.deepseek.com"),
             temperature=llm_cfg.get("temperature", 0.3),
             max_tokens=llm_cfg.get("max_tokens", 8192),
+            reasoning_effort=llm_cfg.get("reasoning_effort", ""),
+            thinking_enabled=llm_cfg.get("thinking_enabled", False),
         ))
 
     @property
@@ -134,6 +138,7 @@ class LLMClient:
         max_tokens: int | None = None,
         max_retries: int = 3,
         timeout_seconds: int = 120,
+        no_thinking: bool = False,
     ) -> LLMResponse:
         """发送消息到 LLM 并获取回复。
 
@@ -150,6 +155,14 @@ class LLMClient:
         temp = temperature if temperature is not None else self.config.temperature
         mt = max_tokens if max_tokens is not None else self.config.max_tokens
 
+        # v4 专属参数
+        extra_kwargs = {}
+        if not no_thinking:
+            if self.config.reasoning_effort:
+                extra_kwargs["reasoning_effort"] = self.config.reasoning_effort
+            if self.config.thinking_enabled:
+                extra_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+
         last_error = None
         for attempt in range(max_retries):
             try:
@@ -160,6 +173,7 @@ class LLMClient:
                     temperature=temp,
                     max_tokens=mt,
                     timeout=timeout_seconds,
+                    **extra_kwargs,
                 )
                 elapsed = time.time() - start
 
