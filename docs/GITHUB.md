@@ -4,6 +4,47 @@
 
 ---
 
+## 零、双机工作流（推荐）
+
+```
+H:\Polaris\                ← 工作机（有数据、API Key、实验结果）
+  ├── data/                ← ERA5原始数据（不上传）
+  ├── projects/            ← 个人研究项目（不上传）
+  ├── reports/             ← 发现简报（不上传）
+  ├── src/polaris/         ← 代码（两个目录都要同步）
+  └── ...
+
+D:\500_Obsidian\Polaris\   ← GitHub 机（干净、无数据）
+  ├── src/polaris/         ← 同上代码
+  ├── docs/                ← 同上文档
+  ├── skills/              ← 同上 skill
+  └── ...
+```
+
+**工作流**：
+1. 在 `H:\Polaris` 写代码、跑实验、积累数据
+2. 完成后，复制变更的文件到 `D:\500_Obsidian\Polaris`
+3. 在 `D:\500_Obsidian\Polaris` 执行 `git commit && git push`
+
+**同步哪些文件**：
+```
+src/polaris/     ← 所有代码变更
+docs/            ← 文档更新
+skills/          ← skill 更新/新增
+benchmarks/      ← 测试基准更新
+polaris.yaml     ← 配置模板变更（确认无API Key）
+```
+
+**不同步的**：
+```
+data/            ← 原始数据（几十GB）
+projects/        ← 个人研究
+reports/         ← 实验产出
+polaris.db       ← 数据库
+```
+
+---
+
 ## 一、上传/不上传对照表
 
 | 类型 | 上传到 GitHub？ | 原因 |
