@@ -60,7 +60,7 @@ def status(project: str):
         click.echo(f"{'='*50}")
 
         # 审稿意见
-        click.echo(f"\n  📋 审稿意见:")
+        click.echo(f"\n  [List] 审稿意见:")
         click.echo(f"     总计: {fb_summary['total']}  |  "
                    f"已解决: {fb_summary['resolved']}  |  "
                    f"处理中: {fb_summary['in_progress']}  |  "
@@ -71,14 +71,14 @@ def status(project: str):
         # 未解决的意见
         open_items = tracker.get_open_items(project)
         if open_items:
-            click.echo(f"\n  ⚠️  未解决意见 ({len(open_items)} 条):")
+            click.echo(f"\n  [!]  未解决意见 ({len(open_items)} 条):")
             for item in open_items[:5]:
-                prio_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(item.priority, "⚪")
+                prio_icon = {"critical": "[CRIT]", "high": "[HIGH]", "medium": "[WARN]", "low": "[OKAY]"}.get(item.priority, "⚪")
                 click.echo(f"     {prio_icon} [{item.id[-8:]}] {item.content[:80]}...")
 
         # 版本
         if latest_v:
-            click.echo(f"\n  📦 最新版本: {latest_v.label}")
+            click.echo(f"\n  [Data] 最新版本: {latest_v.label}")
             click.echo(f"     类型: {latest_v.version_type}  |  "
                        f"时间: {latest_v.created_at}")
             v_counts = vc.count_versions(project)
@@ -131,8 +131,8 @@ def method_search(query: str, limit: int):
         click.echo(f"\n搜索 '{query}' 找到 {len(results)} 个方法:\n")
         for r in results:
             status_icon = {
-                "verified": "✅", "pending_confirm": "⏳",
-                "candidate": "🔶", "rejected": "❌", "deprecated": "⚫"
+                "verified": "[OK]", "pending_confirm": "[...]",
+                "candidate": "🔶", "rejected": "[X]", "deprecated": "⚫"
             }.get(r.status, "❓")
             type_label = {"atom": "原子", "orchestration": "编排", "parameter_instance": "参数"}
             click.echo(f"  {status_icon} [{r.id}] {type_label.get(r.type, r.type)} | {r.name}")
@@ -158,7 +158,7 @@ def method_list(status: str | None, mtype: str | None, domain: str | None):
         type_label = {"atom": "原子", "orchestration": "编排", "parameter_instance": "参数"}
         click.echo(f"\n方法库（{len(results)} 条）:\n")
         for r in results:
-            status_icon = {"verified": "✅", "pending_confirm": "⏳", "candidate": "🔶"}.get(r.status, "❓")
+            status_icon = {"verified": "[OK]", "pending_confirm": "[...]", "candidate": "🔶"}.get(r.status, "❓")
             click.echo(f"  {status_icon} [{r.id}] {type_label.get(r.type, r.type):4s} | {r.name}")
             if r.domain:
                 click.echo(f"     领域: {r.domain}  |  调用: {r.success_count}成功/{r.failure_count}失败")
@@ -206,7 +206,7 @@ def method_seed():
         lib = MethodLibrary(db)
         result = seed_all(lib, approve=True)
 
-        click.echo(f"\n✅ 种子数据录入完成:")
+        click.echo(f"\n[OK] 种子数据录入完成:")
         click.echo(f"  原子方法:   {len(result['atom'])} 条  {result['atom']}")
         click.echo(f"  编排条目:   {len(result['orch'])} 条  {result['orch']}")
         click.echo(f"  参数实例:   {len(result['param'])} 条  {result['param']}")
@@ -222,9 +222,9 @@ def method_approve(method_id: str):
         gate = Gate(db)
         ok = gate.approve(method_id)
         if ok:
-            click.echo(f"✅ 方法 '{method_id}' 已审批通过。")
+            click.echo(f"[OK] 方法 '{method_id}' 已审批通过。")
         else:
-            click.echo(f"❌ 审批失败。请确认方法状态为 'pending_confirm'。")
+            click.echo(f"[X] 审批失败。请确认方法状态为 'pending_confirm'。")
 
 
 @method.command("reject")
@@ -238,7 +238,7 @@ def method_reject(method_id: str, reason: str):
         gate = Gate(db)
         ok = gate.reject(method_id, reason)
         if ok:
-            click.echo(f"❌ 方法 '{method_id}' 已驳回。")
+            click.echo(f"[X] 方法 '{method_id}' 已驳回。")
         else:
             click.echo(f"驳回失败。请确认方法状态为 'pending_confirm'。")
 
@@ -253,12 +253,12 @@ def method_pending():
         methods = gate.get_pending_methods()
 
         if not methods:
-            click.echo("✅ 没有待审批的方法。")
+            click.echo("[OK] 没有待审批的方法。")
             return
 
         click.echo(f"\n待审批方法 ({len(methods)} 条):\n")
         for m in methods:
-            click.echo(f"  ⏳ [{m['id']}] {m['type']} | {m['name']}")
+            click.echo(f"  [...] [{m['id']}] {m['type']} | {m['name']}")
             click.echo(f"     质量分: {m['quality_score']:.2f}  |  审查时间: {m['reviewed_at']}")
 
 
@@ -311,11 +311,11 @@ def review_paper(paper_path: str, mode: str, project: str, dry_run: bool):
     try:
         content = _read_paper(paper_path)
     except click.FileError as e:
-        click.echo(f"❌ {e}")
+        click.echo(f"[X] {e}")
         return
 
-    click.echo(f"\n📄 论文: {paper_path}  ({len(content):,} 字符)")
-    click.echo(f"🔍 审稿模式: {mode}")
+    click.echo(f"\n[Report] 论文: {paper_path}  ({len(content):,} 字符)")
+    click.echo(f"[Search] 审稿模式: {mode}")
 
     # 构建审稿请求
     paper_title = Path(paper_path).stem
@@ -353,14 +353,14 @@ def review_paper(paper_path: str, mode: str, project: str, dry_run: bool):
         click.echo(f"  审稿模式: 多角色辩论（{len(experts)} 位专家）")
 
     if dry_run:
-        click.echo(f"\n📋 System Prompt 预览（前500字符）:")
+        click.echo(f"\n[List] System Prompt 预览（前500字符）:")
         click.echo(f"{'─'*50}")
         msgs = req.to_llm_messages()
         sys_msg = msgs[0]["content"][:500]
         click.echo(sys_msg)
         click.echo(f"...")
         click.echo(f"{'─'*50}")
-        click.echo(f"\n✅ 审稿请求已生成（dry-run，未调用 LLM）。")
+        click.echo(f"\n[OK] 审稿请求已生成（dry-run，未调用 LLM）。")
         return
 
     # M3: 真实 LLM 调用
@@ -369,9 +369,9 @@ def review_paper(paper_path: str, mode: str, project: str, dry_run: bool):
 
     try:
         llm = LLMClient.from_config()
-        click.echo(f"\n🤖 调用 LLM: {llm.config.model}...")
+        click.echo(f"\n[AI] 调用 LLM: {llm.config.model}...")
     except Exception as e:
-        click.echo(f"\n⚠️ LLM 配置失败: {e}")
+        click.echo(f"\n[!] LLM 配置失败: {e}")
         click.echo(f"   请检查 polaris.yaml 中的 API Key 配置。")
         click.echo(f"   使用 --dry-run 可预览 System Prompt。")
         return
@@ -407,7 +407,7 @@ def review_paper(paper_path: str, mode: str, project: str, dry_run: bool):
     from polaris.engine_one_tracker.stop_criteria import StopCriteria
     sc = StopCriteria(_get_db())
     rec = sc.evaluate(project)
-    icon = "✅" if rec.should_stop else "⚠️"
+    icon = "[OK]" if rec.should_stop else "[!]"
     click.echo(f"\n{icon} 收手建议: {rec.reason}（置信度: {rec.confidence:.0%}）")
 
 
@@ -428,8 +428,8 @@ def review_feedback(project: str):
         click.echo(f"\n项目 '{project}' 审稿意见 ({len(items)} 条):\n")
         for item in items:
             status_icon = {
-                "open": "🔴", "in_progress": "🟡",
-                "resolved": "✅", "wontfix": "⚫", "duplicate": "🔄"
+                "open": "[CRIT]", "in_progress": "[WARN]",
+                "resolved": "[OK]", "wontfix": "⚫", "duplicate": "🔄"
             }.get(item.status, "❓")
             click.echo(f"  {status_icon} [{item.id[-8:]}] {item.status:12s} | {item.priority:8s}")
             click.echo(f"     来源: {item.source}")
@@ -463,7 +463,7 @@ def migrate_run(method_id: str, source_region: str, target_regions: str, dry_run
         # 确认方法存在
         method = lib.get_method(method_id)
         if method is None:
-            click.echo(f"❌ 方法 '{method_id}' 未找到。")
+            click.echo(f"[X] 方法 '{method_id}' 未找到。")
             return
 
         # 确定目标区域
@@ -474,14 +474,14 @@ def migrate_run(method_id: str, source_region: str, target_regions: str, dry_run
             targets = [t.strip() for t in target_regions.split(",")]
 
         if dry_run:
-            click.echo(f"\n📋 迁移计划: {method.name}")
+            click.echo(f"\n[List] 迁移计划: {method.name}")
             click.echo(f"   源区域: {source_region}")
             click.echo(f"   目标区域: {', '.join(targets)}")
             click.echo(f"\n   迁移策略（按区域）:")
             for t in targets:
                 info = GlobalMigrator.PRESET_REGIONS.get(t)
                 if info:
-                    level_icon = {"full": "🟢", "limited": "🟡", "missing": "🔴"}
+                    level_icon = {"full": "[OKAY]", "limited": "[WARN]", "missing": "[CRIT]"}
                     icon = level_icon.get(info.data_availability, "⚪")
                     click.echo(f"     {icon} {t}: {info.name}")
                     click.echo(f"        数据: {info.data_availability} | {info.notes[:80]}...")
@@ -495,7 +495,7 @@ def migrate_run(method_id: str, source_region: str, target_regions: str, dry_run
         click.echo(f"{'='*50}")
         for r in results:
             status_icon = {
-                "running": "🔄", "success": "✅", "anomaly": "⚠️", "blocked": "❌"
+                "running": "🔄", "success": "[OK]", "anomaly": "[!]", "blocked": "[X]"
             }.get(r.status.value, "⚪")
             click.echo(f"  {status_icon} {r.target_region}: L{r.level.value} — {r.status.value}")
             if r.anomaly_detail:
@@ -509,7 +509,7 @@ def migrate_regions():
 
     click.echo(f"\n预设区域库 ({len(GlobalMigrator.PRESET_REGIONS)} 个):\n")
     for rid, info in GlobalMigrator.PRESET_REGIONS.items():
-        level_icon = {"full": "🟢", "limited": "🟡", "missing": "🔴"}
+        level_icon = {"full": "[OKAY]", "limited": "[WARN]", "missing": "[CRIT]"}
         icon = level_icon.get(info.data_availability, "⚪")
         click.echo(f"  {icon} {rid:20s} {info.name}")
         click.echo(f"     经纬度: lat {info.lat_range}, lon {info.lon_range}")
@@ -532,7 +532,7 @@ def migrate_anomalies(method_id: str | None):
 
         click.echo(f"\n迁移异常 ({len(anomalies)} 个) — 差异即发现:\n")
         for a in anomalies:
-            click.echo(f"  ⚠️ {a.method_id}: {a.source_region} → {a.target_region}")
+            click.echo(f"  [!] {a.method_id}: {a.source_region} → {a.target_region}")
             click.echo(f"     {a.anomaly_detail[:120]}...")
 
 
@@ -577,16 +577,16 @@ def discover_start(direction: str, max_steps: int, dry_run: bool, data_dir: str 
         loop = DiscoveryLoop(db, max_steps=max_steps, data_dir=data_dir or "")
 
         click.echo(f"\n{'='*60}")
-        click.echo(f"  🔭 Polaris 自主科学发现循环")
+        click.echo(f"  Polaris 自主科学发现循环")
         click.echo(f"  方向: {direction}")
         click.echo(f"{'='*60}")
 
         # ──── 第一步：数据感知（必须先做）────
-        click.echo(f"\n  📦 扫描数据目录: {data_dir or '未指定'}")
+        click.echo(f"\n  [Data] 扫描数据目录: {data_dir or '未指定'}")
         inventory = loop.scan_data_inventory()
 
         if inventory.get("error"):
-            click.echo(f"  ❌ {inventory['error']}")
+            click.echo(f"  [X] {inventory['error']}")
             return
 
         click.echo(f"  样本文件: {inventory['sample_file']}")
@@ -605,15 +605,15 @@ def discover_start(direction: str, max_steps: int, dry_run: bool, data_dir: str 
                 pass
 
         suggestions = loop.suggest_directions(inventory, llm_client=llm)
-        click.echo(f"\n  💡 基于实际数据变量，可执行的分析方向:")
+        click.echo(f"\n  [Idea] 基于实际数据变量，可执行的分析方向:")
         for i, s in enumerate(suggestions, 1):
             click.echo(f"     {i}. {s}")
-        click.echo(f"\n  ⚠️  以上建议仅基于数据中实际存在的变量。")
+        click.echo(f"\n  [!]  以上建议仅基于数据中实际存在的变量。")
         click.echo(f"  没有沙尘浓度/AOD/沙尘排放等变量 → 无法直接分析沙尘。")
         click.echo(f"  可以分析的是起沙的气象条件（风、干旱度、边界层等）。")
 
         if dry_run:
-            click.echo(f"\n✅ 数据感知完成（dry-run）。使用 --no-dry-run 开始执行分析。")
+            click.echo(f"\n[OK] 数据感知完成（dry-run）。使用 --no-dry-run 开始执行分析。")
             return
 
         # 启动循环
@@ -624,9 +624,9 @@ def discover_start(direction: str, max_steps: int, dry_run: bool, data_dir: str 
         if use_llm:
             try:
                 llm = LLMClient.from_config()
-                click.echo(f"\n🤖 LLM 决策引擎: {llm.config.model}")
+                click.echo(f"\n[AI] LLM 决策引擎: {llm.config.model}")
             except Exception as e:
-                click.echo(f"\n⚠️ LLM 不可用 ({e})，使用规则决策模式。")
+                click.echo(f"\n[!] LLM 不可用 ({e})，使用规则决策模式。")
 
         # 执行循环
         click.echo(f"\n开始探索...\n")
@@ -635,8 +635,8 @@ def discover_start(direction: str, max_steps: int, dry_run: bool, data_dir: str 
             if node is None:
                 break
 
-            icon = {"analysis": "🔬", "literature": "📚", "validation": "🔍",
-                    "migration": "🌍", "discovery": "💡", "milestone": "🏁"}.get(node.node_type.value, "⚪")
+            icon = {"analysis": "[A]", "literature": "[L]", "validation": "[V]",
+                    "migration": "[M]", "discovery": "[D]", "milestone": "[*]"}.get(node.node_type.value, "?")
             click.echo(f"  Step {i+1}: {icon} [{node.node_type.value}] {node.summary[:100]}")
             if node.detail:
                 for line in node.detail.split("\n")[:6]:
@@ -658,7 +658,7 @@ def discover_start(direction: str, max_steps: int, dry_run: bool, data_dir: str 
             os.makedirs(os.path.dirname(report_path), exist_ok=True)
             with open(report_path, "w", encoding="utf-8") as f:
                 f.write(report)
-            click.echo(f"\n📄 简报已保存: {report_path}")
+            click.echo(f"\n[Report] 简报已保存: {report_path}")
         except Exception:
             pass
 
@@ -693,8 +693,8 @@ def discover_nodes(limit: int):
         click.echo(f"\nCRT 拓扑节点（最近 {len(rows)} 个）:\n")
         for r in rows:
             type_icon = {
-                "analysis": "🔬", "validation": "🔍", "migration": "🌍",
-                "discovery": "💡", "dead": "💀", "milestone": "🏁"
+                "analysis": "[A]", "validation": "[Search]", "migration": "🌍",
+                "discovery": "[Idea]", "dead": "💀", "milestone": "[Done]"
             }.get(r["node_type"], "⚪")
             click.echo(f"  {type_icon} [{r['id'][-12:]}] {r['node_type']:12s} | {r['summary'][:80]}")
 
@@ -738,11 +738,11 @@ def report(period: str, project: str, output: str | None):
             f"# Polaris 发现简报",
             f"**项目**: {project}  |  **周期**: {period}  |  **生成时间**: {now}",
             f"",
-            f"## 📋 审稿状态",
+            f"## [List] 审稿状态",
             f"- 总意见: {fb_summary['total']}  |  已解决: {fb_summary['resolved']}  |  完成率: {fb_summary['completion_pct']:.0f}%",
             f"- 待处理: {fb_summary['open']}  |  处理中: {fb_summary['in_progress']}",
             f"",
-            f"## 📦 版本管理",
+            f"## [Data] 版本管理",
             f"- 最新版本: {latest_v.label if latest_v else '无'}",
             f"- 版本统计: {v_counts}",
             f"",
@@ -750,7 +750,7 @@ def report(period: str, project: str, output: str | None):
             f"- 总方法: {method_stats['total']}  |  已验证: {method_stats['by_status'].get('verified', 0)}",
             f"",
             f"## 🎯 收手建议",
-            f"- {'✅ 建议收手' if rec.should_stop else '⚠️ 继续迭代'}: {rec.reason}（置信度: {rec.confidence:.0%}）",
+            f"- {'[OK] 建议收手' if rec.should_stop else '[!] 继续迭代'}: {rec.reason}（置信度: {rec.confidence:.0%}）",
             f"",
             f"## 📝 最近审稿",
         ]
@@ -763,7 +763,7 @@ def report(period: str, project: str, output: str | None):
         if output:
             from pathlib import Path
             Path(output).write_text(report_text, encoding="utf-8")
-            click.echo(f"✅ 简报已保存到 {output}")
+            click.echo(f"[OK] 简报已保存到 {output}")
         else:
             click.echo(report_text)
 

@@ -65,26 +65,32 @@ class CRTNode:
 
 
 # LLM 决策 Prompt
-DISCOVERY_DECISION_PROMPT = """你是 Polaris 自主科学发现系统的决策引擎。你的任务是分析当前研究状态，决定下一步行动。
+DISCOVERY_DECISION_PROMPT = """你是 Polaris 自主科学发现系统的决策引擎。分析当前状态，决定下一步行动。
 
-## 当前研究状态
-- 研究方向: {direction}
-- 当前步数: {step}/{max_steps}
-- 已完成节点: {completed_nodes}
+## 当前状态
+- 方向: {direction} | 步数: {step}/{max_steps}
+- 已完成: {completed_nodes}
+- 已执行的分析: {executed_capabilities}
 - 最新发现: {latest_findings}
-- 可用数据: {available_data}
-- 方法库可用方法: {available_methods}
+- 数据: {available_data}
+- 可用分析能力: {capabilities_list}
+
+## 规则
+- 每个分析能力最多执行一次。不要重复已执行过的分析
+- 优先选择尚未用过的能力
+- 如果所有能力都已用过，选择 literature 或 conclude
 
 ## 可选行动
-1. **analyze** — 对可用数据执行分析（需指定分析目标和变量）
-2. **validate** — 对最新结果执行物理校验
-3. **literature** — 搜索相关文献（需指定搜索关键词）
-4. **migrate** — 将当前分析迁移到其他区域
-5. **conclude** — 当前方向已充分探索，生成结论
+1. **analyze** — 执行数据分析。intent 必须是上面列出的且未执行过的能力
+2. **validate** — 物理校验
+3. **literature** — 搜索文献（用英文关键词）
+4. **migrate** — 区域迁移
+5. **conclude** — 所有分析已完成，生成结论
 
-## 输出格式
-请仅输出一行 JSON，不要输出其他内容：
-{{"action":"analyze|validate|literature|migrate|conclude","target":"具体目标描述","reason":"为什么选择这个行动","variables":["var1","var2"],"keywords":"搜索关键词(仅literature行动需要)"}}
+## 输出（仅一行JSON）:
+{{"action":"analyze","target":"简短描述","intent":"露点亏缺","reason":"为什么选这个"}}
+{{"action":"literature","keywords":"英文搜索词","reason":"为什么"}}
+{{"action":"conclude","target":"总结","reason":"探索充分"}}
 """
 
 DISCOVERY_REPORT_PROMPT = """你是 Polaris 的科学发现报告生成器。请基于以下探索轨迹生成一份发现简报。
@@ -301,14 +307,24 @@ class DiscoveryLoop:
             completed = [f"{n.node_type.value}: {n.summary[:80]}" for n in self._nodes[-5:]]
             latest = self._nodes[-1].detail[:300] if self._nodes else "无"
 
+            # 收集已执行的能力名称
+            executed = set()
+            for n in self._nodes:
+                if n.node_type == NodeType.ANALYSIS and "执行:" in n.detail:
+                    # 从 detail 中提取 "执行: XXX"
+                    for line in n.detail.split("\n"):
+                        if line.startswith("执行:") or line.startswith("降级:"):
+                            executed.add(line.split(":")[0] + ":" + line.split(":",1)[1][:40])
+
             prompt = DISCOVERY_DECISION_PROMPT.format(
                 direction=self._direction,
                 step=self._step,
                 max_steps=self.max_steps,
                 completed_nodes="\n".join(completed) if completed else "无",
+                executed_capabilities=", ".join(executed)[:200] if executed else "无",
                 latest_findings=latest,
                 available_data=self._scan_data(),
-                available_methods=self._list_methods(),
+                capabilities_list=self._list_capabilities(),
             )
 
             resp = llm_client.chat([
@@ -361,48 +377,89 @@ class DiscoveryLoop:
     # ---- 行动执行 ----
 
     def _do_analysis(self, decision: dict) -> CRTNode:
-        """执行数据分析。"""
+        """执行数据分析——使用能力层匹配 + 执行。"""
         target = decision.get("target", "数据分析")
-        variables = decision.get("variables", ["t2m", "d2m"])
+        intent = decision.get("intent", target)
 
         detail_lines = []
+        surprise = 0.0
+
         try:
             import xarray as xr
-            import numpy as np
 
             data_files = self._find_data_files()
-            detail_lines.append(f"数据目录: {self.data_dir or '未设置'}")
-            detail_lines.append(f"找到文件: {len(data_files)} 个")
+            if not data_files:
+                return self._add_node(NodeType.ANALYSIS, f"分析: {target}",
+                                      "未找到数据文件", surprise_score=0)
 
-            if data_files:
-                fname = data_files[0]
-                detail_lines.append(f"读取: {os.path.basename(fname)}")
-                ds = xr.open_dataset(fname)
-                for var in variables:
-                    if var in ds.data_vars:
-                        val = float(ds[var].mean())
-                        detail_lines.append(f"{var} 均值: {val:.2f}")
-                    elif var == "wind" or var == "ws":
-                        if "u10" in ds.data_vars and "v10" in ds.data_vars:
-                            ws = np.sqrt(ds.u10**2 + ds.v10**2)
-                            detail_lines.append(f"风速均值: {float(ws.mean()):.2f} m/s")
-                ds.close()
+            fname = data_files[0]
+            ds = xr.open_dataset(fname)
+            available_vars = list(ds.data_vars)
+            ds.close()
+
+            detail_lines.append(f"数据: {os.path.basename(fname)} ({len(available_vars)}变量)")
+            detail_lines.append(f"LLM意图: {intent}")
+
+            # 使用能力解析器
+            from .capabilities import CapabilityResolver
+            resolver = CapabilityResolver()
+            match = resolver.match(intent, available_vars)
+
+            if match.matched and match.capability:
+                # 精确匹配 → 执行
+                result = resolver.execute(match.capability, fname)
+                detail_lines.append(f"执行: {match.capability.name} ({match.reason})")
+                detail_lines.append(self._format_results(result))
+                surprise = self._calc_surprise_from_results(result)
+
+            elif match.fallback:
+                # 降级匹配 → 执行替代方案
+                result = resolver.execute(match.fallback, fname)
+                detail_lines.append(f"降级: {match.reason}")
+                detail_lines.append(f"执行替代: {match.fallback.name}")
+                detail_lines.append(self._format_results(result))
+                surprise = self._calc_surprise_from_results(result)
+
             else:
-                detail_lines.append("未找到NetCDF文件，请检查 --data-dir 路径")
+                # 无法匹配 → 列出可用能力，如实反馈
+                available = resolver.list_available(available_vars)
+                detail_lines.append(f"无法执行: {match.reason}")
+                detail_lines.append(f"当前数据可用的分析 ({len(available)}项):")
+                for c in available[:6]:
+                    detail_lines.append(f"  - {c.name}: {c.description[:60]}")
+
         except ImportError as e:
             detail_lines.append(f"缺少依赖: {e}")
         except Exception as e:
             detail_lines.append(f"分析出错: {e}")
 
-        detail = "\n".join(detail_lines) if detail_lines else "无数据可用"
-        surprise = self._calc_surprise(detail_lines)
+        detail = "\n".join(detail_lines)
+        return self._add_node(NodeType.ANALYSIS, f"分析: {target}", detail, surprise_score=surprise)
 
-        return self._add_node(
-            NodeType.ANALYSIS,
-            f"分析: {target}",
-            detail,
-            surprise_score=surprise,
-        )
+    def _format_results(self, result: dict) -> str:
+        """格式化分析结果。"""
+        lines = []
+        for k, v in result.get("results", {}).items():
+            if isinstance(v, float):
+                lines.append(f"  {k}: {v:.3f}")
+            else:
+                lines.append(f"  {k}: {v}")
+        if result.get("note"):
+            lines.append(f"  [{result['note']}]")
+        return "\n".join(lines) if lines else "无数值结果"
+
+    def _calc_surprise_from_results(self, result: dict) -> float:
+        """基于分析结果计算惊喜度。"""
+        score = 0.0
+        for k, v in result.get("results", {}).items():
+            if isinstance(v, float):
+                if "dry_pct" in k and v > 50:
+                    score += 0.3  # 超过50%干燥 → 有意思
+                if "compound_pct" in k and v > 10:
+                    score += 0.2
+                if "over_10ms" in k and v > 20:
+                    score += 0.2
+        return min(score, 1.0)
 
     def _do_validation(self, decision: dict) -> CRTNode:
         """执行物理校验。"""
@@ -542,6 +599,23 @@ class DiscoveryLoop:
         if not files:
             return "无 NetCDF 文件"
         return f"{len(files)}+ NetCDF 文件 (如 {os.path.basename(files[0])})"
+
+    def _list_capabilities(self) -> str:
+        """列出当前数据可用的分析能力。"""
+        try:
+            from .capabilities import CapabilityResolver
+            resolver = CapabilityResolver()
+            files = self._find_data_files()
+            if files:
+                import xarray as xr
+                ds = xr.open_dataset(files[0])
+                vars_list = list(ds.data_vars)
+                ds.close()
+                caps = resolver.list_available(vars_list)
+                return ", ".join(c.name for c in caps)
+        except Exception:
+            pass
+        return "均值, 标准差, 极值, 百分位"
 
     def _list_methods(self) -> str:
         """列出方法库。"""
