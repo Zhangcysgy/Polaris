@@ -6,11 +6,13 @@
 llm:
   primary:
     provider: deepseek
-    model: deepseek-chat
-    api_key_env: DEEPSEEK_API_KEY        # 从环境变量读取
-    base_url: https://api.deepseek.com/v1
+    model: deepseek-v4-pro                # deepseek-v4-pro | deepseek-v4-flash
+    api_key_env: DEEPSEEK_API_KEY
+    base_url: https://api.deepseek.com
     max_tokens: 8192
-    temperature: 0.3                      # 分析任务用低温
+    temperature: 0.3
+    reasoning_effort: high                # v4 专属：high | medium | low
+    thinking_enabled: true                # v4 专属：启用深度思考
 
   secondary:
     provider: zhipu

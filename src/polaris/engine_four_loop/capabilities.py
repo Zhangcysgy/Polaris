@@ -172,7 +172,19 @@ class CapabilityResolver:
                             variables_missing=missing,
                         )
 
-        # 第三层：无法匹配
+        # 第三层：无法匹配 → 自动智能降级
+        # "基础统计分析"/"深入分析" 等通用词 → 降级到变量均值
+        generic_terms = ["基础统计", "基本统计", "统计分析", "深入分析", "初步分析", "探索分析", "描述统计"]
+        if any(t in intent_lower for t in generic_terms):
+            mean_cap = next((c for c in self.capabilities if c.function_name == "compute_mean"), None)
+            if mean_cap and all(v in available_vars for v in mean_cap.required_vars):
+                return CapabilityMatch(
+                    intent=intent, matched=True, capability=mean_cap,
+                    reason=f"智能降级: '{intent}' → '{mean_cap.name}'（通用分析请求自动路由到基础统计）",
+                    variables_available=available_vars,
+                )
+
+        # 彻底无法匹配
         return CapabilityMatch(
             intent=intent,
             matched=False,

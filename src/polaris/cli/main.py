@@ -591,6 +591,7 @@ def discover_start(direction: str, max_steps: int, dry_run: bool, data_dir: str 
 
         click.echo(f"  样本文件: {inventory['sample_file']}")
         click.echo(f"  变量 ({len(inventory['variables'])}): {', '.join(inventory['variables'])}")
+        loop._available_vars_cache = inventory['variables']  # 缓存供 LLM 规划使用
         click.echo(f"  维度: {inventory['dims']}")
         click.echo(f"  时间: {inventory['time_range']}")
         click.echo(f"  空间: {inventory['spatial_range']}")
